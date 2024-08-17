@@ -11,6 +11,22 @@
 // Color Not used
 //
 
+// TODO
+// game length selection
+// short - 5, 5, 5
+// medium, 6, 6, 6
+// long,   7, 7, 7
+// eternal 9, 9, 9
+// 
+// 
+// rules changes
+//    first card matches X
+//    each card must match some attribute
+//    cannot unplay
+//    cards change
+//    draw from the discard
+//
+
 std::random_device rd;
 std::mt19937 rng(rd());
 
@@ -21,6 +37,10 @@ template <typename T>
 T lerp(T v0, T v1, float t) {
 	return (1 - t) * v0 + t * v1;
 }
+float Ease(float x) {
+	return -(std::cos(3.1415926f * x) - 1) / 2;
+}
+
 
 bool PointInRect(const olc::vf2d point, const olc::vf2d& pos, const olc::vf2d& size) {
 	if (point.x >= pos.x && point.y >= pos.y && point.x < pos.x + size.x && point.y < pos.y + size.y) {
@@ -30,14 +50,9 @@ bool PointInRect(const olc::vf2d point, const olc::vf2d& pos, const olc::vf2d& s
 	return false;
 }
 
-struct Value {
-	
-};
-
 struct ShapePrimitive {
 	std::vector<olc::vf2d> points;
 	std::vector<olc::vf2d> uv;
-	int side_count;
 };
 
 struct Shape {
@@ -46,8 +61,6 @@ struct Shape {
 };
 
 olc::vf2d card_size = { 25.0f, 35.0f };
-
-
 std::array<olc::Pixel, 7> card_colors = { olc::BLUE, olc::DARK_GREEN, olc::RED, olc::MAGENTA, olc::DARK_YELLOW, olc::GREY, olc::DARK_CYAN };
 std::array<olc::Pixel, 7> shape_colors = { olc::VERY_DARK_BLUE, olc::VERY_DARK_GREEN, olc::VERY_DARK_RED, olc::VERY_DARK_MAGENTA, olc::VERY_DARK_YELLOW, olc::VERY_DARK_GREY, olc::VERY_DARK_CYAN };
 
@@ -110,7 +123,7 @@ std::vector<Card> CreateDeck(int num_numbers, int num_letters, int num_shapes) {
 				Card c;
 				c.shape.primitive = &shape_primitives[s + 3];
 				c.number = n + 1;
-				c.letter = "ABCDE"[l];
+				c.letter = "ABCDEFGHI"[l];
 				c.size = card_size;
 
 				auto color_index = counter % 7;
@@ -149,6 +162,7 @@ bool IsValid(const Card& end_card, const Card& choice) {
 	return false;
 }
 
+// The cards that have already been played this round
 struct InPlay {
 	std::vector<Card> cards;
 	olc::vf2d position = { 128.0f, 120.0f };
@@ -181,6 +195,7 @@ struct InPlay {
 
 InPlay in_play;
 
+//Cards in hand
 struct Hand {
 	std::vector<Card> cards;
 	int max_size = 7;
@@ -257,10 +272,13 @@ int Score(const std::vector<Card>& run) {
 	return length_score + number_score + shape_score + letter_score + color_score;
 }
 
+int game_length = 5;
 // The players hand
 Hand hand;
 int score = 0;
 
+// Index into hand.cards for the card just played, for animation
+int card_played_index = -1;
 
 
 
@@ -273,6 +291,9 @@ enum class GameState {
 	PICK_CARD, //Pick cards to play
 	SCORE_TURN, //calcualte the score of the current play
 	END_GAME, //End of the game, show final score
+	ANIMATE_PLAY,
+	ANIMATE_UNPLAY,
+	LENGTH_SELECT,
 };
 
 
@@ -344,7 +365,7 @@ struct StartScreenState : public State {
 
 		if (pge->GetMouse(0).bPressed) {
 			if (PointInRect(pge->GetMousePos(), button_pos, button_size)) {
-				next_state = GameState::GAME_START;
+				next_state = GameState::LENGTH_SELECT;
 			}
 		}
 
@@ -365,7 +386,7 @@ struct GameStartState : public State {
 		the_discard.clear();
 
 		//Create a new deck with the default configuration
-		the_deck = CreateDeck(5, 5, 5);
+		the_deck = CreateDeck(game_length, game_length, game_length);
 
 		//Shuffle the deck
 		std::shuffle(std::begin(the_deck), std::end(the_deck), rng);
@@ -418,8 +439,11 @@ struct PickCardState : public State {
 			for (int i = 0; i < hand.cards.size(); i++) {
 				if (PointInRect(pge->GetMousePos(), hand.cards[i].position, card_size)) {
 					if (in_play.cards.size() == 0 || IsValid(in_play.cards.back(), hand.cards[i])) {
-						in_play.Add(hand.cards[i]);
-						hand.cards.erase(hand.cards.begin() + i);
+						
+						card_played_index = i;
+						next_state = GameState::ANIMATE_PLAY;
+						//in_play.Add(hand.cards[i]);
+						//hand.cards.erase(hand.cards.begin() + i);
 					}
 				}
 			}
@@ -428,8 +452,10 @@ struct PickCardState : public State {
 		// If the user clicked on the last in play card, let them take it back
 		if (in_play.cards.size() && !in_play.cards.back().locked && pge->GetMouse(0).bPressed) {
 			if (PointInRect(pge->GetMousePos(), in_play.cards.back().position, card_size)) {
-				hand.Add(in_play.cards.back());
-				in_play.cards.pop_back();
+				//card_played_index = 
+				//hand.Add(in_play.cards.back());
+				//in_play.cards.pop_back();
+				next_state = GameState::ANIMATE_UNPLAY;
 			}
 		}
 
@@ -526,6 +552,216 @@ struct EndGameState : public State {
 	}
 };
 
+struct PlayCardAnimationState : public State {
+	PlayCardAnimationState(olc::PixelGameEngine* pge) : State(pge) {};
+
+	float fTotalTime = 0.0f;
+
+	struct AnimationState {
+		olc::vf2d start_pos;
+		olc::vf2d end_pos;
+		int index;
+	};
+
+	std::vector<AnimationState> hand_animation;
+	std::vector<AnimationState> play_animation;
+
+	void EnterState() override {
+		fTotalTime = 0.0f;
+		hand_animation.clear();
+		play_animation.clear();
+
+		//Figure out where all the in_play cards will be moving to.  The card being moved will be the last card.
+		olc::vf2d position = { in_play.position.x - (in_play.cards.size() + 1) * card_size.x / 2.0f, in_play.position.y };
+		olc::vf2d increment = { card_size.x, 0.0f };
+		for (int i = 0; i < in_play.cards.size(); i++) {
+			AnimationState as;
+			as.start_pos = in_play.cards[i].position;
+			as.end_pos = position;
+			as.index = i;
+			position += increment;
+			play_animation.push_back(as);
+		}
+		 // The ending position of the card being played
+		olc::vf2d end_pos = position;
+
+
+		// Figure out where all the cards in hand will be moving to.
+		position = { hand.position.x - (hand.cards.size() - 1) * card_size.x / 2.0f, hand.position.y};
+		for (int i = 0; i < hand.cards.size(); i++) {
+			AnimationState as;
+			as.start_pos = hand.cards[i].position;
+			//If this is the card that was played, its moving across the screen
+			as.end_pos = i == card_played_index ? end_pos : position;
+			as.index = i;
+			//If this is the card that was played, don't bump the position
+			position += i == card_played_index ? olc::vf2d{0.0f, 0.0f} : increment;
+			hand_animation.push_back(as);
+		}
+	}
+
+	GameState OnUserUpdate(float fElapsedTime) {
+		fTotalTime += 1.8f * fElapsedTime;
+
+		for (auto& ani : hand_animation) {
+			Card& c = hand.cards[ani.index];
+			c.position = lerp(ani.start_pos, ani.end_pos, std::min(1.0f, Ease(fTotalTime)));
+		}
+
+		for (auto& ani : play_animation) {
+			Card& c = in_play.cards[ani.index];
+			c.position = lerp(ani.start_pos, ani.end_pos, std::min(1.0f, Ease(fTotalTime)));
+		}
+
+		if (fTotalTime >= 1.0f) {
+			in_play.Add(hand.cards[card_played_index]);
+			hand.cards.erase(hand.cards.begin() + card_played_index);
+			return GameState::PICK_CARD;
+		}
+
+		in_play.Draw(pge);
+		hand.Draw(pge);
+
+		return GameState::ANIMATE_PLAY;
+	}
+};
+
+struct UnPlayCardAnimationState : public State {
+	UnPlayCardAnimationState(olc::PixelGameEngine* pge) : State(pge) {};
+
+	float fTotalTime = 0.0f;
+
+	struct AnimationState {
+		olc::vf2d start_pos;
+		olc::vf2d end_pos;
+		int index;
+	};
+
+	std::vector<AnimationState> hand_animation;
+	std::vector<AnimationState> play_animation;
+
+	void EnterState() override {
+		fTotalTime = 0.0f;
+		hand_animation.clear();
+		play_animation.clear();
+
+		//Figure out where all the in_play cards will be moving to.  The card being moved will be the last card.
+		olc::vf2d position = { in_play.position.x - (in_play.cards.size() - 1) * card_size.x / 2.0f, in_play.position.y };
+		olc::vf2d increment = { card_size.x, 0.0f };
+		for (int i = 0; i < in_play.cards.size(); i++) {
+			AnimationState as;
+			as.start_pos = in_play.cards[i].position;
+			as.end_pos = position;
+			as.index = i;
+			position += increment;
+			play_animation.push_back(as);
+		}
+
+		// Figure out where all the cards in hand will be moving to.
+		position = { hand.position.x - (hand.cards.size() + 1) * card_size.x / 2.0f, hand.position.y };
+		for (int i = 0; i < hand.cards.size(); i++) {
+			AnimationState as;
+			as.start_pos = hand.cards[i].position;
+			//If this is the card that was played, its moving across the screen
+			as.end_pos = position;
+			as.index = i;
+			//If this is the card that was played, don't bump the position
+			position += increment;
+			hand_animation.push_back(as);
+		}
+
+		// Only the last card can be un-played, setup its new movement position
+		play_animation.push_back(AnimationState{ in_play.cards.back().position, position, static_cast<int>(in_play.cards.size()) - 1 });
+	}
+
+	GameState OnUserUpdate(float fElapsedTime) {
+		fTotalTime += 1.8f * fElapsedTime;
+
+		for (auto& ani : hand_animation) {
+			Card& c = hand.cards[ani.index];
+			c.position = lerp(ani.start_pos, ani.end_pos, std::min(1.0f, Ease(fTotalTime)));
+		}
+
+		for (auto& ani : play_animation) {
+			Card& c = in_play.cards[ani.index];
+			c.position = lerp(ani.start_pos, ani.end_pos, std::min(1.0f, Ease(fTotalTime)));
+		}
+
+		if (fTotalTime >= 1.0f) {
+			hand.Add(in_play.cards.back());
+			in_play.cards.pop_back();
+			return GameState::PICK_CARD;
+		}
+
+		in_play.Draw(pge);
+		hand.Draw(pge);
+
+		return GameState::ANIMATE_UNPLAY;
+	}
+};
+
+struct LengthSelectState : public State {
+	struct Button {
+		std::string text;
+		olc::vf2d pos;
+		olc::vf2d size;
+		olc::vf2d text_size;
+		int value;
+	};
+
+	std::array<Button, 5> buttons;
+
+	LengthSelectState(olc::PixelGameEngine* pge) : State(pge) {
+		//Setup the buttons
+		buttons[0].text = "Normal";
+		buttons[0].pos = { 88.0f, 91.0f };
+		buttons[0].size = { 80.0f, 10.0f };
+		buttons[0].text_size = pge->GetTextSize(buttons[0].text);
+		buttons[0].value = 5;
+
+		buttons[1].text = "Medium";
+		buttons[1].pos = { 88.0f, 103.0f };
+		buttons[1].size = { 80.0f, 10.0f };
+		buttons[1].text_size = pge->GetTextSize(buttons[1].text);
+		buttons[1].value = 6;
+
+		buttons[2].text = "Long";
+		buttons[2].pos = { 88.0f, 115.0f };
+		buttons[2].size = { 80.0f, 10.0f };
+		buttons[2].text_size = pge->GetTextSize(buttons[2].text);
+		buttons[2].value = 7;
+
+		buttons[3].text = "Too Long";
+		buttons[3].pos = { 88.0f, 127.0f };
+		buttons[3].size = { 80.0f, 10.0f };
+		buttons[3].text_size = pge->GetTextSize(buttons[3].text);
+		buttons[3].value = 9;
+
+		buttons[4].text = "Back";
+		buttons[4].pos = { 88.0f, 139.0f };
+		buttons[4].size = { 80.0f, 10.0f };
+		buttons[4].text_size = pge->GetTextSize(buttons[4].text);
+		buttons[4].value = 0;
+	};
+
+
+	GameState OnUserUpdate(float fElapsedTime) {
+		GameState next_state = GameState::LENGTH_SELECT;
+
+		for (int i = 0; i < buttons.size(); i++) {
+			pge->FillRectDecal(buttons[i].pos, buttons[i].size, olc::DARK_GREY);
+			olc::vf2d text_pos = buttons[i].pos + buttons[i].size / 2.0f - buttons[i].text_size / 2.0f;
+			pge->DrawStringDecal(text_pos, buttons[i].text, olc::BLACK);
+			if (pge->GetMouse(0).bPressed && PointInRect(pge->GetMousePos(), buttons[i].pos, buttons[i].size)) {
+				game_length = buttons[i].value;
+				next_state = game_length != 0 ? GameState::GAME_START : GameState::START_SCREEN;
+			}
+		}
+
+		return next_state;
+	}
+};
+
 
 std::map<GameState, std::unique_ptr<State>> gameStates;
 
@@ -553,19 +789,22 @@ public:
 		gameStates.insert(std::make_pair(GameState::DRAW_CARDS, std::make_unique<DrawCardsState>(this)));
 		gameStates.insert(std::make_pair(GameState::PICK_CARD, std::make_unique<PickCardState>(this)));
 		gameStates.insert(std::make_pair(GameState::END_GAME, std::make_unique<EndGameState>(this)));
+		gameStates.insert(std::make_pair(GameState::ANIMATE_PLAY, std::make_unique<PlayCardAnimationState>(this)));
+		gameStates.insert(std::make_pair(GameState::ANIMATE_UNPLAY, std::make_unique<UnPlayCardAnimationState>(this)));
+		gameStates.insert(std::make_pair(GameState::LENGTH_SELECT, std::make_unique<LengthSelectState>(this)));
 
-		for (int i = 3; i <= 9; i++) {
+		for (int i = 3; i <= 11; i++) {
 			shape_primitives[i] = MakePrimitive(i);
 		}
 
 		the_deck = CreateDeck(5, 5, 5);
 
-		
+		//
 
-		for (int i = 0; i < hand.max_size; i++) {
-			hand.Add(the_deck.back());
-			the_deck.pop_back();
-		}
+		//for (int i = 0; i < hand.max_size; i++) {
+		//	hand.Add(the_deck.back());
+		//	the_deck.pop_back();
+		//}
 		
 		return true;
 	}
