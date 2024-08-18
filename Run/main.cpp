@@ -196,6 +196,10 @@ struct Card {
 		//draw the letter
 		pge->DrawStringDecal(position - tl + size - olc::vf2d{8.0f, 8.0f}, std::string{letter}, olc::WHITE * dim);
 	}
+
+	bool operator==(const Card& other) {
+		return number == other.number && shape.primitive == other.shape.primitive && letter == other.letter && color == other.color;
+	}
 };
 
 std::unordered_map<int, ShapePrimitive> shape_primitives;
@@ -1112,7 +1116,7 @@ struct TutorialState : public State {
 				{{10.0f, 30.0f}, std::string{"button.  This throws away all"}},
 				{{10.0f, 40.0f}, std::string{"cards in your hand and draws"}},
 				{{10.0f, 50.0f}, std::string{"new cards on the next turn."}},
-				{{10.0f, 60.0f}, std::string{"If a valid run in present then"}},
+				{{10.0f, 60.0f}, std::string{"If a valid run is present then"}},
 				{{10.0f, 70.0f}, std::string{"it will still be scored."}},
 				{{10.0f, 170.0f}, std::string{"Click to continue"}},
 			},
@@ -1208,7 +1212,7 @@ struct TutorialState : public State {
 		{
 			true, true, false, false, true,
 			{
-				{{10.0f, 10.0f}, std::string{"A septagon is the most common"}},
+				{{10.0f, 10.0f}, std::string{"A heptagon is the most common"}},
 				{{10.0f, 20.0f}, std::string{"shape; appearing 2 times.  The"}},
 				{{10.0f, 30.0f}, std::string{"shape bonus is 1 point."}},
 				{{2.0f, 110.0f}, std::string{"Length - 2"}},
@@ -1271,18 +1275,45 @@ struct TutorialState : public State {
 		},
 	};
 
+
+
 	void EnterState() override {
+		tutorial_rng = {};
 		tutorial_rng.seed(10032);
 		the_deck = CreateDeck(5, 5, 5);
-		std::shuffle(std::begin(the_deck), std::end(the_deck), tutorial_rng);
 
-		// Draw the cards into the tutorial hand
-		int cards_to_draw = std::min(hand.max_size - hand.cards.size(), the_deck.size());
+		auto deck_copy = the_deck;
+		//shuffle(std::begin(the_deck), std::end(the_deck), tutorial_rng);
 
-		for (int i = 0; i < cards_to_draw; i++) {
-			hand.Add(the_deck.back());
-			the_deck.pop_back();
+		//std::vector<int> indices;
+
+		//for (int i = 0; i < 7; i++) {
+		//	auto loc = std::find(std::begin(deck_copy), std::end(deck_copy), the_deck[the_deck.size() - i - 1]);
+		//	indices.push_back(loc - std::begin(deck_copy));
+		//}
+
+		//// Draw the cards into the tutorial hand
+		//int cards_to_draw = std::min(hand.max_size - hand.cards.size(), the_deck.size());
+
+		//for (int i = 0; i < cards_to_draw; i++) {
+		//	hand.Add(the_deck.back());
+		//	the_deck.pop_back();
+		//}
+
+		// Shuffling is not stable across platforms.  This normally doesn't matter but the tutorial
+		// needs specific cards for the examples.
+		std::array<int, 7> hand_card_indices = {59, 91, 24, 54, 36, 90, 109};
+		for (const auto& index : hand_card_indices) {
+			hand.Add(*(std::begin(the_deck) + index));
 		}
+		
+		std::sort(std::begin(hand_card_indices), std::end(hand_card_indices), std::greater<int>());
+		for (const auto& index : hand_card_indices) {
+			the_deck.erase(std::begin(the_deck) + index);
+		}
+
+		// Shuffle the deck now just in case it is needed
+		shuffle(std::begin(the_deck), std::end(the_deck), tutorial_rng);
 
 		in_play.Add(hand.cards[0]);
 		hand.cards.erase(std::begin(hand.cards));
