@@ -12,26 +12,80 @@
 //
 
 // TODO
-// game length selection
-// short - 5, 5, 5
-// medium, 6, 6, 6
-// long,   7, 7, 7
-// eternal 9, 9, 9
-// 
-// 
 // rules changes
 //    first card matches X
 //    each card must match some attribute
 //    cannot unplay
 //    cards change
 //    draw from the discard
+//    reverse run order
+//    time constraint
 //
+// custom decks
+//    Number count
+//    shape side count
+//    letter count
+//    seed
 
 std::random_device rd;
 std::mt19937 rng(rd());
 
 
+struct Rule {
+	bool enabled;
+	std::string text;
+	std::string key;
 
+	// Some value specific to the rule
+	int value = 0;
+};
+
+struct AdditionalRules {
+	// Not allowed to un_play cards
+	Rule no_unplay = { false, "Cannot unplay cards", "no_unplay"};
+
+	// Runs must now be decreasing instead of increasing
+	Rule rev_run_order = { false, "Runs in decreasing order", "rev_run_order" };
+
+	// Each turn has a timer to play.  The turn is ended automatically (either by end or discard)
+	Rule time_constraint = { false, "Time is running out", "time_constraint" };
+
+	// Various scoring changes
+	Rule double_number_score = { false, "Repeated numbers score double", "double_number_score" };
+	Rule double_shape_score = { false, "Repeated shapes score double", "double_shape_score" };
+	Rule double_letter_score = { false, "Repeated letters score double", "double_letter_score" };
+	Rule double_color_score = { false, "Repeated color score double", "double_color_score" };
+
+	// Monochrome
+	Rule monochrome = { false, "Can't see colors", "monochrome" };
+
+	// Draw modifiers
+	//    chance to dupe a card in hand?
+	//    chance to change color to X
+};
+
+//AdditionalRules rules;
+
+std::map<std::string, Rule> possible_rules = {
+	{"no_unplay", {false,  "Can't unplay cards", "no_unplay", 7}},
+	{"monochrome", {false, "Can't see colors", "monochrome", 2}}
+};
+
+std::map<std::string, Rule> enabled_rules;
+
+void TickRule(const std::string& rule_name) {
+	if (enabled_rules.count(rule_name)) {
+		auto& r = enabled_rules.at(rule_name);
+		r.value -= 1;
+		if (r.value < 0) {
+			enabled_rules.erase(rule_name);
+		}
+	}
+}
+
+bool RuleEnabled(const std::string& rule_name) {
+	return enabled_rules.count(rule_name) > 0;
+}
 
 template <typename T>
 T lerp(T v0, T v1, float t) {
@@ -41,6 +95,26 @@ float Ease(float x) {
 	return -(std::cos(3.1415926f * x) - 1) / 2;
 }
 
+void DrawRules(olc::PixelGameEngine* pge, const std::map<std::string, Rule>& rules) {
+	float y_pos = 10.0f;
+	float x_pos = 184.0f;
+	float y_increment = 12.0f;
+
+	if (rules.size() == 0) {
+		std::string str = "No Special Rules";
+		olc::vf2d str_size = pge->GetTextSize(str);
+		olc::vf2d draw_pos = { x_pos - str_size.x / 2.0f, y_pos };
+		pge->DrawStringDecal(draw_pos, str);
+	}
+	else {
+		for (const auto& rule : rules) {
+			olc::vf2d str_size = pge->GetTextSize(rule.second.text);
+			olc::vf2d draw_pos = { x_pos - str_size.x / 2.0f, y_pos };
+			pge->DrawStringDecal(draw_pos, rule.second.text);
+			y_pos += y_increment;
+		}
+	}
+}
 
 bool PointInRect(const olc::vf2d point, const olc::vf2d& pos, const olc::vf2d& size) {
 	if (point.x >= pos.x && point.y >= pos.y && point.x < pos.x + size.x && point.y < pos.y + size.y) {
@@ -75,7 +149,11 @@ struct Card {
 
 	// pos is top-left position
 	void Draw(olc::PixelGameEngine* pge, float dim = 1.0f) const {
-		pge->FillRectDecal(position, size, color * dim);
+		bool monochrome = RuleEnabled("monochrome");
+		olc::Pixel shape_color = monochrome ? olc::VERY_DARK_GREY : shape.color;
+		olc::Pixel card_color = monochrome ? olc::GREY : color;
+
+		pge->FillRectDecal(position, size, card_color * dim);
 
 		//draw the shape
 		std::vector<olc::vf2d> points;
@@ -84,7 +162,8 @@ struct Card {
 			points.push_back(pt);
 		}
 
-		pge->DrawPolygonDecal(nullptr, points, shape.primitive->uv, shape.color * dim);
+		
+		pge->DrawPolygonDecal(nullptr, points, shape.primitive->uv, shape_color * dim);
 
 		olc::vf2d tl = { 2.0f, 2.0f };
 
@@ -171,6 +250,12 @@ struct InPlay {
 		if (cards.size()) {
 			cards.back().locked = true;
 		}
+
+		if (RuleEnabled("no_unplay")) {
+			TickRule("no_unplay");
+			c.locked = true;
+		}
+
 		cards.push_back(c);
 
 		int cards_in_play = cards.size();
@@ -183,7 +268,6 @@ struct InPlay {
 		}
 	}
 
-	// pos is the "center top position" of the hand
 	void Draw(olc::PixelGameEngine* pge) {
 		int cards_in_hand = cards.size();
 
@@ -215,7 +299,6 @@ struct Hand {
 		}
 	}
 
-	// pos is the "center top position" of the hand
 	void Draw(olc::PixelGameEngine* pge) {
 		for (const auto& c : cards) {
 			bool isValid = true;
@@ -244,7 +327,7 @@ int max_value(const T& container) {
 }
 
 int Fib(int x) {
-	return std::round(std::pow(1.6, x) / 2.236);
+	return std::round(std::pow(1.618, x) / 2.236);
 }
 
 int Score(const std::vector<Card>& run) {
@@ -264,10 +347,10 @@ int Score(const std::vector<Card>& run) {
 		color_counts[c.color.n]++;
 	}
 
-	int number_score = Fib(max_value(number_counts));
-	int shape_score = Fib(max_value(shape_counts));
-	int letter_score = Fib(max_value(letter_counts));
-	int color_score = Fib(max_value(color_counts));
+	int number_score = max_value(number_counts) - 1;
+	int shape_score = max_value(shape_counts) - 1;
+	int letter_score = max_value(letter_counts) - 1;
+	int color_score = max_value(color_counts) - 1;
 
 	return length_score + number_score + shape_score + letter_score + color_score;
 }
@@ -289,11 +372,17 @@ enum class GameState {
 	GAME_START, // Start of a game.
 	DRAW_CARDS, // Draw cards up to the hand limit
 	PICK_CARD, //Pick cards to play
-	SCORE_TURN, //calcualte the score of the current play
+	END_TURN, //calcualte the score of the current play
 	END_GAME, //End of the game, show final score
 	ANIMATE_PLAY,
 	ANIMATE_UNPLAY,
 	LENGTH_SELECT,
+	TUTORIAL,
+	TUTORIAL_MENU,
+	TUTORIAL_CARD,
+	TUTORIAL_PLAY,
+	TUTORIAL_SCORE,
+	TUTORIAL_RULES,
 };
 
 
@@ -304,6 +393,14 @@ struct State {
 	virtual void EnterState() {};
 	virtual GameState OnUserUpdate(float fElapsedTime) = 0;
 	virtual void ExitState() {};
+};
+
+struct Button {
+	std::string text;
+	olc::vf2d pos;
+	olc::vf2d size;
+	olc::vf2d text_size;
+	int value;
 };
 
 struct StartScreenState : public State {
@@ -343,6 +440,9 @@ struct StartScreenState : public State {
 		memory.Decal()->Update();
 		pge->SetDrawTarget((uint8_t)0);
 
+		hand.cards.clear();
+		the_deck.clear();
+		in_play.cards.clear();
 	}
 
 	GameState OnUserUpdate(float fElapsedTime) {
@@ -359,6 +459,16 @@ struct StartScreenState : public State {
 
 		pge->DrawStringDecal(button_pos + olc::vf2d{ 2.0, 2.0 }, "Start", olc::BLACK, scale);
 
+		// Tutorial button
+		olc::vf2d tutorial_pos = olc::vf2d{ pge->ScreenWidth() / 3.0f, pge->ScreenHeight() * 5.0f / 6.0f + 2.0f };
+		olc::vf2d tutorial_size = olc::vf2d{ pge->ScreenWidth() / 3.0f, pge->ScreenHeight() / 12.0f };
+		pge->FillRectDecal(tutorial_pos, tutorial_size, olc::DARK_GREY);
+
+		text_size = pge->GetTextSize("Tutorial");
+		scale = (tutorial_size) / text_size;
+
+		pge->DrawStringDecal(tutorial_pos + olc::vf2d{ 1.0, 1.0 }, "Tutorial", olc::BLACK, scale);
+
 		olc::Decal* m = memory.Decal();
 
 		pge->DrawExplicitDecal(m, &memory_pos[0], memory_uv, memory_color);
@@ -366,6 +476,9 @@ struct StartScreenState : public State {
 		if (pge->GetMouse(0).bPressed) {
 			if (PointInRect(pge->GetMousePos(), button_pos, button_size)) {
 				next_state = GameState::LENGTH_SELECT;
+			}
+			if (PointInRect(pge->GetMousePos(), tutorial_pos, tutorial_size)) {
+				next_state = GameState::TUTORIAL;
 			}
 		}
 
@@ -402,9 +515,7 @@ struct DrawCardsState : public State {
 	DrawCardsState(olc::PixelGameEngine* pge) : State(pge) {};
 
 	void EnterState() override {
-
 		int cards_to_draw = std::min(hand.max_size - hand.cards.size(), the_deck.size());
-
 
 		for (int i = 0; i < cards_to_draw; i++) {
 			hand.Add(the_deck.back());
@@ -442,8 +553,6 @@ struct PickCardState : public State {
 						
 						card_played_index = i;
 						next_state = GameState::ANIMATE_PLAY;
-						//in_play.Add(hand.cards[i]);
-						//hand.cards.erase(hand.cards.begin() + i);
 					}
 				}
 			}
@@ -473,9 +582,7 @@ struct PickCardState : public State {
 
 			if (pge->GetMouse(0).bPressed) {
 				if (PointInRect(pge->GetMousePos(), button_pos, button_size)) {
-					score += Score(in_play.cards);
-					in_play.cards.clear();
-					next_state = GameState::DRAW_CARDS;
+					next_state = GameState::END_TURN;
 				}
 			}
 		}
@@ -494,17 +601,44 @@ struct PickCardState : public State {
 
 			if (pge->GetMouse(0).bPressed) {
 				if (PointInRect(pge->GetMousePos(), button_pos, button_size)) {
-					in_play.cards.clear();
 					hand.cards.clear();
-					next_state = GameState::DRAW_CARDS;
+					next_state = GameState::END_TURN;
 				}
 			}
 		}
-
+		DrawRules(pge, enabled_rules);
 		pge->DrawStringDecal({ 10.0f, 10.0f }, "Score: " + std::to_string(score));
 		pge->DrawStringDecal({ 10.0f, 20.0f }, "Deck : " + std::to_string(the_deck.size()));
 
 		return next_state;
+	}
+};
+
+struct EndTurnState : public State{
+	EndTurnState(olc::PixelGameEngine* pge) : State(pge) {}
+
+	void EnterState() override {
+		TickRule("monochrome");
+
+		//At the end of every round, there is a 25% chance to gain or refrech a random rule
+		int rand_val = std::uniform_int_distribution<>(0, 3 + enabled_rules.size())(rng);
+		if (rand_val == 0) {
+			// Select a rule at random
+			rand_val = std::uniform_int_distribution<>(0, possible_rules.size() - 1)(rng);
+			auto rule = possible_rules.begin();
+			std::advance(rule, rand_val);
+			enabled_rules[rule->second.key] = rule->second;
+		}
+
+		if (in_play.cards.size() > 2) {
+			score += Score(in_play.cards);
+		}
+
+		in_play.cards.clear();
+	}
+
+	GameState OnUserUpdate(float fElapseddTime) {
+		return GameState::DRAW_CARDS;
 	}
 };
 
@@ -515,7 +649,7 @@ struct EndGameState : public State {
 		hand.cards.clear();
 		in_play.cards.clear();
 		the_deck.clear();
-		
+		enabled_rules.clear();
 	}
 
 	GameState OnUserUpdate(float fElapsedTime) {
@@ -701,13 +835,6 @@ struct UnPlayCardAnimationState : public State {
 };
 
 struct LengthSelectState : public State {
-	struct Button {
-		std::string text;
-		olc::vf2d pos;
-		olc::vf2d size;
-		olc::vf2d text_size;
-		int value;
-	};
 
 	std::array<Button, 5> buttons;
 
@@ -760,8 +887,423 @@ struct LengthSelectState : public State {
 
 		return next_state;
 	}
+
+
 };
 
+struct TutorialState : public State {
+	TutorialState(olc::PixelGameEngine* pge) : State(pge) {};
+
+	struct TextData {
+		olc::vf2d pos;
+		std::string str;
+		olc::Pixel color = olc::WHITE;
+	};
+
+	struct RectData {
+		olc::vf2d pos;
+		olc::vf2d size;
+		olc::Pixel color = olc::YELLOW;
+	};
+
+	struct LineData {
+		olc::vf2d pos_a;
+		olc::vf2d pos_b;
+		olc::Pixel color = olc::WHITE;
+	};
+
+	struct TutorialData {
+		bool draw_hand;
+		bool draw_in_play;
+		bool draw_end_turn;
+		bool draw_discard;
+		std::vector<TextData> text;
+		std::vector<RectData> rects;
+		std::vector<LineData> lines;
+	};
+
+	std::mt19937 tutorial_rng;
+
+	int tutorial_id = 0;
+
+	std::vector<TutorialData> tutorial_data = {
+		{
+			true, true, false, false,
+			{
+				{{10.0f, 10.0f}, std::string{"Your objective to play runs of"}},
+				{{10.0f, 20.0f}, std::string{"cards from your hand.  Longer"}},
+				{{10.0f, 30.0f}, std::string{"runs are worth more points."}},
+				{{10.0f, 40.0f}, std::string{"Each card has 4 main values."}},
+				{{53.0f, 108.0f}, std::string{"Number"}},
+				{{165.0f, 147.0f}, std::string{"Letter"}},
+				{{53.0f, 147.0f}, std::string{"Shape"}},
+				{{165.0f, 108.0f}, std::string{"Color"}},
+				{{10.0f, 170.0f}, std::string{"Click to continue"}},
+			},
+			{},
+			{
+				{{100.0f, 113.0f}, {116.0f, 121.0f}},
+				{{93.0f,  151.0f}, {120.0f, 143.0f}},
+				{{165.0f, 115.0f}, {138.0f, 124.0f}},
+				{{163.0f, 151.0f}, {138.0f, 151.0f}},
+			}
+		},
+		{
+			true, true, false, false,
+			{
+				{{10.0f, 10.0f}, std::string{"The current run is here in the"}},
+				{{10.0f, 20.0f}, std::string{"middle of the screen."}},
+				{{10.0f, 170.0f}, std::string{"Click to continue"}},
+			},
+			{
+				{{6.0f, 117.0f}, {243.0f, 41.0f}, olc::YELLOW}
+			}
+		},
+		{
+			true, true, false, false,
+			{
+				{{10.0f, 10.0f}, std::string{"Your current hand is at the"}},
+				{{10.0f, 20.0f}, std::string{"bottom of the screen."}},
+				{{10.0f, 170.0f}, std::string{"Click to continue"}},
+			},
+			{
+				{{6.0f, 200.0f}, {243.0f, 41.0f}, olc::YELLOW}
+			}
+		},
+		{
+			true, true, false, false,
+			{
+				{{10.0f, 10.0f}, std::string{"You can unplay the last card"}},
+				{{10.0f, 20.0f}, std::string{"of the run and return it to"}},
+				{{10.0f, 30.0f}, std::string{"your hand."}},
+				{{10.0f, 170.0f}, std::string{"Click to continue"}},
+			},
+			{
+				{{140.0f, 119.0f}, {27.0f, 37.0f}, olc::YELLOW},
+			}
+		},
+		{
+			true, true, true, false,
+			{
+				{{10.0f, 10.0f}, std::string{"If you have a run of length"}},
+				{{10.0f, 20.0f}, std::string{"at least 3 you may end your"}},
+				{{10.0f, 30.0f}, std::string{"turn and score the run with"}},
+				{{10.0f, 40.0f}, std::string{"the end turn button."}},
+				{{10.0f, 170.0f}, std::string{"Click to continue"}},
+			},
+			{
+				{{1.0f, 191.0f}, {82.0f, 13.0f}, olc::YELLOW}
+			}
+		},
+		{
+			true, true, false, true,
+			{
+				{{10.0f, 10.0f}, std::string{"You may discard your hand at"}},
+				{{10.0f, 20.0f}, std::string{"any time with the discard"}},
+				{{10.0f, 30.0f}, std::string{"button.  This throws away all"}},
+				{{10.0f, 40.0f}, std::string{"cards in your hand and draws"}},
+				{{10.0f, 50.0f}, std::string{"new cards on the next turn."}},
+				{{10.0f, 60.0f}, std::string{"If a valid run in present then"}},
+				{{10.0f, 70.0f}, std::string{"it will still be scored."}},
+				{{10.0f, 170.0f}, std::string{"Click to continue"}},
+			},
+			{
+				{{172.0f, 191.0f}, {84.0f, 13.0f}, olc::YELLOW}
+			}
+		},
+		{
+			true, true, false, true,
+			{
+				{{10.0f, 10.0f}, std::string{"In either case you will draw"}},
+				{{10.0f, 20.0f}, std::string{"back up to your maximum hand"}},
+				{{10.0f, 30.0f}, std::string{"size and begin a new turn."}},
+				{{10.0f, 170.0f}, std::string{"Click to continue"}},
+			},
+		},
+		{
+			true, true, false, true,
+			{
+				{{10.0f, 10.0f}, std::string{"Score: 0"}},
+				{{10.0f, 20.0f}, std::string{"Deck : 118"}},
+				{{10.0f, 30.0f}, std::string{"The current score and number"}},
+				{{10.0f, 40.0f}, std::string{"of cards left in the deck are"}},
+				{{10.0f, 50.0f}, std::string{"both shown in the top left."}},
+				{{10.0f, 60.0f}, std::string{"The game ends when the deck is"}},
+				{{10.0f, 70.0f}, std::string{"empty and no run can be made."}},
+				{{10.0f, 170.0f}, std::string{"Click to continue"}},
+			},
+			{
+				{{8.0f, 8.0f}, {84.0f, 22.0f}, olc::YELLOW}
+			}
+		},
+		{
+			true, true, false, false,
+			{
+				{{10.0f, 10.0f}, std::string{"Runs are scored primarily on"}},
+				{{10.0f, 20.0f}, std::string{"their length.  A run of 3 has"}},
+				{{10.0f, 30.0f}, std::string{"a base score of 2 while a run"}},
+				{{10.0f, 40.0f}, std::string{"of 6 has a base score of 8."}},
+				{{10.0f, 50.0f}, std::string{"Repeating card values within a"}},
+				{{10.0f, 60.0f}, std::string{"run gives a point bonus"}},
+				{{10.0f, 170.0f}, std::string{"Click to continue"}},
+			},
+		},
+		{
+			true, true, false, false,
+			{
+				{{10.0f, 10.0f}, std::string{"This run has a length of 3 for"}},
+				{{10.0f, 20.0f}, std::string{"a base score of 2."}},
+				{{2.0f, 110.0f}, std::string{"Length - 2"}},
+				{{10.0f, 160.0f}, std::string{"Total - 2"}},
+				{{10.0f, 170.0f}, std::string{"Click to continue"}},
+			},
+			{
+				{{88.0f, 118.0f}, {80.0f, 39.0f}, olc::YELLOW}
+			}
+		},
+		{
+			true, true, false, false,
+			{
+				{{10.0f, 10.0f}, std::string{"No number appears more than"}},
+				{{10.0f, 20.0f}, std::string{"one time.  The number bonus"}},
+				{{10.0f, 30.0f}, std::string{"is 0 points."}},
+				{{2.0f, 110.0f}, std::string{"Length - 2"}},
+				{{2.0f, 120.0f}, std::string{"Number - 0"}},
+				{{10.0f, 160.0f}, std::string{"Total - 2"}},
+				{{10.0f, 170.0f}, std::string{"Click to continue"}},
+			},
+			{
+				{{91.0f, 121.0f}, {10.0f, 10.0f}, olc::YELLOW},
+				{{116.0f, 121.0f}, {10.0f, 10.0f}, olc::YELLOW},
+				{{141.0f, 121.0f}, {10.0f, 10.0f}, olc::YELLOW},
+			}
+		},
+		{
+			true, true, false, false,
+			{
+				{{10.0f, 10.0f}, std::string{"No letter appears more than"}},
+				{{10.0f, 20.0f}, std::string{"one time.  The letter bonus"}},
+				{{10.0f, 30.0f}, std::string{"is 0 points."}},
+				{{2.0f, 110.0f}, std::string{"Length - 2"}},
+				{{2.0f, 120.0f}, std::string{"Number - 0"}},
+				{{2.0f, 130.0f}, std::string{"Letter - 0"}},
+				{{10.0f, 160.0f}, std::string{"Total - 2"}},
+				{{10.0f, 170.0f}, std::string{"Click to continue"}},
+			},
+			{
+				{{104.0f, 144.0f}, {10.0f, 10.0f}, olc::YELLOW},
+				{{129.0f, 144.0f}, {10.0f, 10.0f}, olc::YELLOW},
+				{{154.0f, 144.0f}, {10.0f, 10.0f}, olc::YELLOW},
+			}
+		},
+		{
+			true, true, false, false,
+			{
+				{{10.0f, 10.0f}, std::string{"A septagon is the most common"}},
+				{{10.0f, 20.0f}, std::string{"shape; appearing 2 times.  The"}},
+				{{10.0f, 30.0f}, std::string{"shape bonus is 1 point."}},
+				{{2.0f, 110.0f}, std::string{"Length - 2"}},
+				{{2.0f, 120.0f}, std::string{"Number - 0"}},
+				{{2.0f, 130.0f}, std::string{"Letter - 0"}},
+				{{10.0f, 140.0f}, std::string{"Shape - 1"}},
+				{{10.0f, 160.0f}, std::string{"Total - 3"}},
+				{{10.0f, 170.0f}, std::string{"Click to continue"}},
+			},
+			{
+				{{93.0f, 127.0f}, {21.0f, 21.0f}, olc::YELLOW},
+				{{143.0f, 127.0f}, {21.0f, 21.0f}, olc::YELLOW},
+			}
+		},
+		{
+			true, true, false, false,
+			{
+				{{10.0f, 10.0f}, std::string{"The most common card color is "}},
+				{{10.0f, 20.0f}, std::string{"magenta; appearing 2 times."}},
+				{{10.0f, 30.0f}, std::string{"The color bonus is 1 point."}},
+				{{2.0f, 110.0f}, std::string{"Length - 2"}},
+				{{2.0f, 120.0f}, std::string{"Number - 0"}},
+				{{2.0f, 130.0f}, std::string{"Letter - 0"}},
+				{{10.0f, 140.0f}, std::string{"Shape - 1"}},
+				{{10.0f, 150.0f}, std::string{"Color - 1"}},
+				{{10.0f, 160.0f}, std::string{"Total - 4"}},
+				{{10.0f, 170.0f}, std::string{"Click to continue"}},
+			},
+			{
+				{{90.0f, 119.0f}, { 27.0f, 37.0f }, olc::YELLOW},
+				{ {140.0f, 119.0f}, {27.0f, 37.0f}, olc::YELLOW },
+			}
+		},
+		{
+			true, true, false, false,
+			{
+				{{10.0f, 10.0f}, std::string{"The total score for this run"}},
+				{{10.0f, 20.0f}, std::string{"is 4 points."}},
+				{{2.0f, 110.0f}, std::string{"Length - 2"}},
+				{{2.0f, 120.0f}, std::string{"Number - 0"}},
+				{{2.0f, 130.0f}, std::string{"Letter - 0"}},
+				{{10.0f, 140.0f}, std::string{"Shape - 1"}},
+				{{10.0f, 150.0f}, std::string{"Color - 1"}},
+				{{10.0f, 160.0f}, std::string{"Total - 4"}},
+				{{10.0f, 170.0f}, std::string{"Click to continue"}},
+			},
+		},
+		{
+			true, true, false, false,
+			{
+				{{10.0f, 40.0f}, std::string{"On occasion additional game"}},
+				{{10.0f, 50.0f}, std::string{"rules will be added.  These"}},
+				{{10.0f, 60.0f}, std::string{"are shown in the top right and"}},
+				{{10.0f, 70.0f}, std::string{"do what they say."}},
+				{{10.0f, 170.0f}, std::string{"Click to return to title"}},
+			},
+			{
+				{{128.0f, 10.0f}, {126.0f, 24.0f}, olc::YELLOW}
+			}
+		},
+	};
+
+	void EnterState() override {
+		tutorial_rng.seed(10032);
+		the_deck = CreateDeck(5, 5, 5);
+		std::shuffle(std::begin(the_deck), std::end(the_deck), tutorial_rng);
+
+		// Draw the cards into the tutorial hand
+		int cards_to_draw = std::min(hand.max_size - hand.cards.size(), the_deck.size());
+
+		for (int i = 0; i < cards_to_draw; i++) {
+			hand.Add(the_deck.back());
+			the_deck.pop_back();
+		}
+
+		in_play.Add(hand.cards[0]);
+		hand.cards.erase(std::begin(hand.cards));
+
+		tutorial_id = 0;
+	}
+
+	GameState OnUserUpdate(float fElapsedTime) {
+		GameState next_state = GameState::TUTORIAL;
+		const auto& td = tutorial_data[tutorial_id];
+		if (td.draw_in_play) {
+			in_play.Draw(pge);
+		}
+
+		if (td.draw_hand) {
+			hand.Draw(pge);
+		}
+
+		if (td.draw_end_turn) {
+			olc::vf2d button_pos = { 2.0f, 193.0f };
+			olc::vf2d button_size = { 80.0f, 10.0f };
+
+			pge->FillRectDecal(button_pos, button_size, olc::DARK_GREY);
+
+			olc::vf2d text_size = pge->GetTextSize("End Turn");
+			olc::vf2d scale = (button_size) / text_size;
+
+			pge->DrawStringDecal(button_pos + olc::vf2d{ 0.5f, 0.5f }, "End Turn", olc::BLACK, scale);
+		}
+
+		if (td.draw_discard) {
+			olc::vf2d button_pos = { 174.0f, 193.0f };
+			olc::vf2d button_size = { 80.0f, 10.0f };
+
+			pge->FillRectDecal(button_pos, button_size, olc::DARK_GREY);
+
+			olc::vf2d text_size = pge->GetTextSize("Discard");
+			olc::vf2d scale = (button_size) / text_size;
+
+			pge->DrawStringDecal(button_pos + olc::vf2d{ 0.5f, 0.5f }, "Discard", olc::BLACK, scale);
+		}
+
+		for (const auto& rect : td.rects) {
+			pge->DrawRectDecal(rect.pos, rect.size, rect.color);
+		}
+
+		for (const auto& line : td.lines) {
+			pge->DrawLineDecal(line.pos_a, line.pos_b, line.color);
+		}
+
+		for (const auto& text : td.text) {
+			pge->DrawStringDecal(text.pos, text.str, text.color);
+		}
+
+		//pge->DrawStringDecal(pge->GetMousePos(), pge->GetMousePos().str());
+
+		if (pge->GetMouse(0).bPressed) {
+			if (tutorial_id < tutorial_data.size() - 1) {
+				tutorial_id++;
+				if (tutorial_id == 3) {
+					in_play.Add(hand.cards[0]);
+					hand.cards.erase(std::begin(hand.cards));
+					in_play.Add(hand.cards[0]);
+					hand.cards.erase(std::begin(hand.cards));
+				}
+			}
+			else {
+				next_state = GameState::START_SCREEN;
+			}
+		}
+
+		return next_state;
+	}
+
+
+
+
+};
+
+struct TutorialMenuState : public State {
+	std::array<Button, 5> buttons;
+
+	TutorialMenuState(olc::PixelGameEngine* pge) : State(pge) {
+		//Setup the buttons
+		buttons[0].text = "Card Tour";
+		buttons[0].pos = { 88.0f, 91.0f };
+		buttons[0].size = { 80.0f, 10.0f };
+		buttons[0].text_size = pge->GetTextSize(buttons[0].text);
+		buttons[0].value = 5;
+
+		buttons[1].text = "Objective and Play";
+		buttons[1].pos = { 88.0f, 103.0f };
+		buttons[1].size = { 80.0f, 10.0f };
+		buttons[1].text_size = pge->GetTextSize(buttons[1].text);
+		buttons[1].value = 6;
+
+		buttons[2].text = "Scoring";
+		buttons[2].pos = { 88.0f, 115.0f };
+		buttons[2].size = { 80.0f, 10.0f };
+		buttons[2].text_size = pge->GetTextSize(buttons[2].text);
+		buttons[2].value = 7;
+
+		buttons[3].text = "Extra Rules";
+		buttons[3].pos = { 88.0f, 127.0f };
+		buttons[3].size = { 80.0f, 10.0f };
+		buttons[3].text_size = pge->GetTextSize(buttons[3].text);
+		buttons[3].value = 9;
+
+		buttons[4].text = "Back";
+		buttons[4].pos = { 88.0f, 139.0f };
+		buttons[4].size = { 80.0f, 10.0f };
+		buttons[4].text_size = pge->GetTextSize(buttons[4].text);
+		buttons[4].value = 0;
+	};
+
+	GameState OnUserUpdate(float fElapsedTime) {
+		GameState next_state = GameState::TUTORIAL_MENU;
+
+		for (int i = 0; i < buttons.size(); i++) {
+			pge->FillRectDecal(buttons[i].pos, buttons[i].size, olc::DARK_GREY);
+			olc::vf2d text_pos = buttons[i].pos + buttons[i].size / 2.0f - buttons[i].text_size / 2.0f;
+			pge->DrawStringDecal(text_pos, buttons[i].text, olc::BLACK);
+			if (pge->GetMouse(0).bPressed && PointInRect(pge->GetMousePos(), buttons[i].pos, buttons[i].size)) {
+				next_state = game_length != 0 ? GameState::START_SCREEN : GameState::START_SCREEN;
+			}
+		}
+
+		return GameState::TUTORIAL_MENU;
+	}
+};
 
 std::map<GameState, std::unique_ptr<State>> gameStates;
 
@@ -792,12 +1334,12 @@ public:
 		gameStates.insert(std::make_pair(GameState::ANIMATE_PLAY, std::make_unique<PlayCardAnimationState>(this)));
 		gameStates.insert(std::make_pair(GameState::ANIMATE_UNPLAY, std::make_unique<UnPlayCardAnimationState>(this)));
 		gameStates.insert(std::make_pair(GameState::LENGTH_SELECT, std::make_unique<LengthSelectState>(this)));
+		gameStates.insert(std::make_pair(GameState::END_TURN, std::make_unique<EndTurnState>(this)));
+		gameStates.insert(std::make_pair(GameState::TUTORIAL, std::make_unique<TutorialState>(this)));
 
 		for (int i = 3; i <= 11; i++) {
 			shape_primitives[i] = MakePrimitive(i);
 		}
-
-		the_deck = CreateDeck(5, 5, 5);
 
 		//
 
