@@ -67,8 +67,17 @@ struct AdditionalRules {
 //AdditionalRules rules;
 
 std::map<std::string, Rule> possible_rules = {
-	{"no_unplay", {false,  "Can't unplay cards", "no_unplay", 7}},
-	{"monochrome", {false, "Can't see colors", "monochrome", 2}}
+	{"no_unplay", {false,  "No take backs", "no_unplay", 7}},
+	{"monochrome", {false, "Monochromatic", "monochrome", 2}},
+	{"double_length", {false, "2x length score", "double_length", 1}},
+	{"double_number", {false, "2x number score", "double_number", 1}},
+	{"double_letter", {false, "2x letter score", "double_letter", 1}},
+	{"double_shape", {false, "2x shape score", "double_shape", 1}},
+	{"double_color", {false, "2x color score ", "double_color", 1}},
+	{"discard_to_deck", {false, "Discard to deck", "discard_to_deck", 1}},
+	{"run_backwards", {false, "Run Backwards", "run_backwards", 3}},
+	{"carbon_copy", {false, "Carbon copy", "carbon_copy", 1}},
+	{"double_jump", {false, "Double jump", "double_jump", 1}},
 };
 
 std::map<std::string, Rule> enabled_rules;
@@ -132,11 +141,25 @@ struct ShapePrimitive {
 struct Shape {
 	ShapePrimitive* primitive;
 	olc::Pixel color;
+	int color_index;
 };
 
 olc::vf2d card_size = { 25.0f, 35.0f };
-std::array<olc::Pixel, 7> card_colors = { olc::BLUE, olc::DARK_GREEN, olc::RED, olc::MAGENTA, olc::DARK_YELLOW, olc::GREY, olc::DARK_CYAN };
-std::array<olc::Pixel, 7> shape_colors = { olc::VERY_DARK_BLUE, olc::VERY_DARK_GREEN, olc::VERY_DARK_RED, olc::VERY_DARK_MAGENTA, olc::VERY_DARK_YELLOW, olc::VERY_DARK_GREY, olc::VERY_DARK_CYAN };
+
+std::array<olc::Pixel, 7> card_colors = {
+	olc::Pixel{142, 68, 173},
+	olc::Pixel{41, 128, 185},
+	olc::Pixel{93, 173, 226},
+	olc::Pixel{39, 174, 96},
+	olc::Pixel{241, 196, 15},
+	olc::Pixel{230, 126, 34},
+	olc::Pixel{231, 76, 60}
+};
+
+// These will be filled in automatically based on the card colors
+std::array<olc::Pixel, 7> shape_colors;
+//std::array<olc::Pixel, 7> card_colors = { olc::BLUE, olc::DARK_GREEN, olc::RED, olc::MAGENTA, olc::DARK_YELLOW, olc::GREY, olc::DARK_CYAN };
+//std::array<olc::Pixel, 7> shape_colors = { olc::VERY_DARK_BLUE, olc::VERY_DARK_GREEN, olc::VERY_DARK_RED, olc::VERY_DARK_MAGENTA, olc::VERY_DARK_YELLOW, olc::VERY_DARK_GREY, olc::VERY_DARK_CYAN };
 
 struct Card {
 	olc::vf2d size;
@@ -207,6 +230,7 @@ std::vector<Card> CreateDeck(int num_numbers, int num_letters, int num_shapes) {
 
 				auto color_index = counter % 7;
 				c.shape.color = shape_colors[color_index];
+				c.shape.color_index = color_index;
 				c.color = card_colors[color_index];
 				counter++;
 				deck.push_back(c);
@@ -226,19 +250,19 @@ std::vector<Card> the_discard;
 
 // Checks if the choice card would be valid if played after the end_card
 bool IsValid(const Card& end_card, const Card& choice) {
-	if (choice.letter == end_card.letter + 1) {
-		return true;
-	}
+	int valid_count = 0;
+	int req_diff = 1;
 
-	if (choice.number == end_card.number + 1) {
-		return true;
-	}
+	req_diff *= RuleEnabled("run_backwards") ? -1 : 1;
+	req_diff *= RuleEnabled("double_jump") ? 2 : 1;
+	req_diff *= RuleEnabled("carbon_copy") ? 0 : 1;
 
-	if (choice.shape.primitive->points.size() == end_card.shape.primitive->points.size() + 1) {
-		return true;
-	}
+	valid_count += (choice.letter == end_card.letter + req_diff) ? 1 : 0;
+	valid_count += (choice.number == end_card.number + req_diff) ? 1 : 0;
+	valid_count += (choice.shape.primitive->points.size() == end_card.shape.primitive->points.size() + req_diff) ? 1 : 0;
+	valid_count += (choice.shape.color_index == end_card.shape.color_index + req_diff) ? 1 : 0;
 
-	return false;
+	return valid_count > 0;
 }
 
 // The cards that have already been played this round
@@ -311,6 +335,19 @@ struct Hand {
 	}
 };
 
+void DrawColorPanel(olc::PixelGameEngine* pge, olc::vf2d center_top_pos) {
+	int color_count = card_colors.size();
+	olc::vf2d start_pos = { center_top_pos.x - color_count * 5.0f, center_top_pos.y };
+	olc::vf2d increment = { 10.0f, 0.0f };
+
+	bool monochrome = RuleEnabled("monochrome");
+
+	for (const auto& c : card_colors) {
+		pge->FillRectDecal(start_pos, { 10.0f, 10.0f }, monochrome ? olc::GREY : c);
+		start_pos += increment;
+	}
+}
+
 template<typename T>
 int max_value(const T& container) {
 	using VT = typename T::value_type;
@@ -331,7 +368,7 @@ int Fib(int x) {
 }
 
 int Score(const std::vector<Card>& run) {
-	int length_score = Fib(run.size());
+	int length_score = Fib(run.size()) * (RuleEnabled("double_length") ? 2 : 1);
 
 	//Count occurences of each number, letter, shape, and color
 	//A bonus is awarded for using many of the same
@@ -347,10 +384,10 @@ int Score(const std::vector<Card>& run) {
 		color_counts[c.color.n]++;
 	}
 
-	int number_score = max_value(number_counts) - 1;
-	int shape_score = max_value(shape_counts) - 1;
-	int letter_score = max_value(letter_counts) - 1;
-	int color_score = max_value(color_counts) - 1;
+	int number_score = (max_value(number_counts) - 1) * (RuleEnabled("double_number") ? 2 : 1);
+	int shape_score = (max_value(shape_counts) - 1) * (RuleEnabled("double_shape") ? 2 : 1);
+	int letter_score = (max_value(letter_counts) - 1) * (RuleEnabled("double_letter") ? 2 : 1);
+	int color_score = (max_value(color_counts) - 1) * (RuleEnabled("double_color") ? 2 : 1);
 
 	return length_score + number_score + shape_score + letter_score + color_score;
 }
@@ -363,8 +400,16 @@ int score = 0;
 // Index into hand.cards for the card just played, for animation
 int card_played_index = -1;
 
+void DrawNormalInterface(olc::PixelGameEngine* pge) {
+	DrawColorPanel(pge, { 128.0f, 193.0f });
 
+	in_play.Draw(pge);
+	hand.Draw(pge);
 
+	DrawRules(pge, enabled_rules);
+	pge->DrawStringDecal({ 10.0f, 10.0f }, "Score: " + std::to_string(score));
+	pge->DrawStringDecal({ 10.0f, 20.0f }, "Deck : " + std::to_string(the_deck.size()));
+}
 
 enum class GameState {
 	NONE,
@@ -443,9 +488,10 @@ struct StartScreenState : public State {
 		hand.cards.clear();
 		the_deck.clear();
 		in_play.cards.clear();
+		enabled_rules.clear();
 	}
 
-	GameState OnUserUpdate(float fElapsedTime) {
+	GameState OnUserUpdate(float fElapsedTime) override {
 		GameState next_state = GameState::START_SCREEN;
 
 		olc::vf2d button_pos = olc::vf2d{ pge->ScreenWidth() / 3.0f, pge->ScreenHeight() * 2.0f / 3.0f };
@@ -505,7 +551,7 @@ struct GameStartState : public State {
 		std::shuffle(std::begin(the_deck), std::end(the_deck), rng);
 	}
 
-	GameState OnUserUpdate(float fElapsedTime) {
+	GameState OnUserUpdate(float fElapsedTime) override {
 		//hand.Draw(pge, olc::vf2d{ 128.0f, 205.0f });
 		return GameState::DRAW_CARDS;
 	}
@@ -523,7 +569,7 @@ struct DrawCardsState : public State {
 		}
 	}
 
-	GameState OnUserUpdate(float fElapsedTime) {
+	GameState OnUserUpdate(float fElapsedTime) override {
 		hand.Draw(pge);
 		if (hand.cards.size() < 3) {
 			return GameState::END_GAME;
@@ -535,11 +581,11 @@ struct DrawCardsState : public State {
 struct PickCardState : public State {
 	PickCardState(olc::PixelGameEngine* pge) : State(pge) {};
 
-	GameState OnUserUpdate(float fElapsedTime) {
+	GameState OnUserUpdate(float fElapsedTime) override {
 		GameState next_state = GameState::PICK_CARD;
 
-		in_play.Draw(pge);
-		hand.Draw(pge);
+		//in_play.Draw(pge);
+		//hand.Draw(pge);
 
 		int cards_in_hand = hand.cards.size();
 
@@ -601,14 +647,25 @@ struct PickCardState : public State {
 
 			if (pge->GetMouse(0).bPressed) {
 				if (PointInRect(pge->GetMousePos(), button_pos, button_size)) {
+					if (RuleEnabled("discard_to_deck")) {
+						for (auto& c : hand.cards) {
+							the_deck.push_back(c);
+						}
+					}
 					hand.cards.clear();
 					next_state = GameState::END_TURN;
 				}
 			}
 		}
-		DrawRules(pge, enabled_rules);
-		pge->DrawStringDecal({ 10.0f, 10.0f }, "Score: " + std::to_string(score));
-		pge->DrawStringDecal({ 10.0f, 20.0f }, "Deck : " + std::to_string(the_deck.size()));
+
+		// Draw the color track
+		//DrawColorPanel(pge, { 128.0f, 193.0f });
+
+		//DrawRules(pge, enabled_rules);
+		//pge->DrawStringDecal({ 10.0f, 10.0f }, "Score: " + std::to_string(score));
+		//pge->DrawStringDecal({ 10.0f, 20.0f }, "Deck : " + std::to_string(the_deck.size()));
+
+		DrawNormalInterface(pge);
 
 		return next_state;
 	}
@@ -618,11 +675,11 @@ struct EndTurnState : public State{
 	EndTurnState(olc::PixelGameEngine* pge) : State(pge) {}
 
 	void EnterState() override {
-		TickRule("monochrome");
 
-		//At the end of every round, there is a 25% chance to gain or refrech a random rule
-		int rand_val = std::uniform_int_distribution<>(0, 3 + enabled_rules.size())(rng);
-		if (rand_val == 0) {
+		//At the end of every round, there is a base 33%% chance to gain or refresh a random rule
+		//the chance lowers if there are more rules added
+		int rand_val = std::uniform_int_distribution<>(0, 5 + enabled_rules.size())(rng);
+		if (rand_val < 2) {
 			// Select a rule at random
 			rand_val = std::uniform_int_distribution<>(0, possible_rules.size() - 1)(rng);
 			auto rule = possible_rules.begin();
@@ -634,10 +691,31 @@ struct EndTurnState : public State{
 			score += Score(in_play.cards);
 		}
 
+		if (RuleEnabled("discard_to_deck")) {
+			for (auto& c : in_play.cards) {
+				c.locked = false;
+				the_deck.push_back(c);
+				//Shuffle the deck
+				std::shuffle(std::begin(the_deck), std::end(the_deck), rng);
+			}
+		}
+		
 		in_play.cards.clear();
 	}
 
-	GameState OnUserUpdate(float fElapseddTime) {
+	GameState OnUserUpdate(float fElapseddTime) override {
+		TickRule("monochrome");
+		TickRule("double_number");
+		TickRule("double_letter");
+		TickRule("double_shape");
+		TickRule("double_color");
+		TickRule("discard_to_deck");
+		TickRule("run_backwards");
+		TickRule("carbon_copy");
+		TickRule("double_jump");
+
+		DrawNormalInterface(pge);
+
 		return GameState::DRAW_CARDS;
 	}
 };
@@ -652,7 +730,7 @@ struct EndGameState : public State {
 		enabled_rules.clear();
 	}
 
-	GameState OnUserUpdate(float fElapsedTime) {
+	GameState OnUserUpdate(float fElapsedTime) override {
 		std::string final_score_str = "Final Score:";
 		std::string score_str = std::to_string(score);
 
@@ -734,7 +812,7 @@ struct PlayCardAnimationState : public State {
 		}
 	}
 
-	GameState OnUserUpdate(float fElapsedTime) {
+	GameState OnUserUpdate(float fElapsedTime) override {
 		fTotalTime += 1.8f * fElapsedTime;
 
 		for (auto& ani : hand_animation) {
@@ -753,8 +831,7 @@ struct PlayCardAnimationState : public State {
 			return GameState::PICK_CARD;
 		}
 
-		in_play.Draw(pge);
-		hand.Draw(pge);
+		DrawNormalInterface(pge);
 
 		return GameState::ANIMATE_PLAY;
 	}
@@ -808,7 +885,7 @@ struct UnPlayCardAnimationState : public State {
 		play_animation.push_back(AnimationState{ in_play.cards.back().position, position, static_cast<int>(in_play.cards.size()) - 1 });
 	}
 
-	GameState OnUserUpdate(float fElapsedTime) {
+	GameState OnUserUpdate(float fElapsedTime) override {
 		fTotalTime += 1.8f * fElapsedTime;
 
 		for (auto& ani : hand_animation) {
@@ -827,8 +904,7 @@ struct UnPlayCardAnimationState : public State {
 			return GameState::PICK_CARD;
 		}
 
-		in_play.Draw(pge);
-		hand.Draw(pge);
+		DrawNormalInterface(pge);
 
 		return GameState::ANIMATE_UNPLAY;
 	}
@@ -871,8 +947,7 @@ struct LengthSelectState : public State {
 		buttons[4].value = 0;
 	};
 
-
-	GameState OnUserUpdate(float fElapsedTime) {
+	GameState OnUserUpdate(float fElapsedTime) override {
 		GameState next_state = GameState::LENGTH_SELECT;
 
 		for (int i = 0; i < buttons.size(); i++) {
@@ -887,8 +962,6 @@ struct LengthSelectState : public State {
 
 		return next_state;
 	}
-
-
 };
 
 struct TutorialState : public State {
@@ -917,6 +990,8 @@ struct TutorialState : public State {
 		bool draw_in_play;
 		bool draw_end_turn;
 		bool draw_discard;
+		bool draw_color_track;
+
 		std::vector<TextData> text;
 		std::vector<RectData> rects;
 		std::vector<LineData> lines;
@@ -928,10 +1003,10 @@ struct TutorialState : public State {
 
 	std::vector<TutorialData> tutorial_data = {
 		{
-			true, true, false, false,
+			true, true, false, false, true,
 			{
-				{{10.0f, 10.0f}, std::string{"Your objective to play runs of"}},
-				{{10.0f, 20.0f}, std::string{"cards from your hand.  Longer"}},
+				{{10.0f, 10.0f}, std::string{"Your objective is to play runs"}},
+				{{10.0f, 20.0f}, std::string{"of cards from your hand.  Long"}},
 				{{10.0f, 30.0f}, std::string{"runs are worth more points."}},
 				{{10.0f, 40.0f}, std::string{"Each card has 4 main values."}},
 				{{53.0f, 108.0f}, std::string{"Number"}},
@@ -949,7 +1024,41 @@ struct TutorialState : public State {
 			}
 		},
 		{
-			true, true, false, false,
+			true, true, false, false, true,
+			{
+				{{10.0f, 10.0f}, std::string{"To count as a run only one of"}},
+				{{10.0f, 20.0f}, std::string{"these values needs to increment"}},
+				{{10.0f, 30.0f}, std::string{"from card to card."}},
+				{{53.0f, 108.0f}, std::string{"Number"}},
+				{{165.0f, 147.0f}, std::string{"Letter"}},
+				{{53.0f, 147.0f}, std::string{"Shape"}},
+				{{165.0f, 108.0f}, std::string{"Color"}},
+				{{10.0f, 170.0f}, std::string{"Click to continue"}},
+			},
+			{},
+			{
+				{{100.0f, 113.0f}, {116.0f, 121.0f}},
+				{{93.0f,  151.0f}, {120.0f, 143.0f}},
+				{{165.0f, 115.0f}, {138.0f, 124.0f}},
+				{{163.0f, 151.0f}, {138.0f, 151.0f}},
+			}
+		},
+		{
+			true, true, false, false, true,
+			{
+				{{10.0f, 10.0f}, std::string{"The color track at the bottom"}},
+				{{10.0f, 20.0f}, std::string{"of the screen shows the order"}},
+				{{10.0f, 30.0f}, std::string{"of colors from lowest value on"}},
+				{{10.0f, 40.0f}, std::string{"the left to highest value on"}},
+				{{10.0f, 50.0f}, std::string{"the right."}},
+				{{10.0f, 170.0f}, std::string{"Click to continue"}},
+			},
+			{
+				{{92.0f, 192.0f}, {72.0f, 12.0f}, olc::YELLOW}
+			}
+		},
+		{
+			true, true, false, false, true,
 			{
 				{{10.0f, 10.0f}, std::string{"The current run is here in the"}},
 				{{10.0f, 20.0f}, std::string{"middle of the screen."}},
@@ -960,7 +1069,7 @@ struct TutorialState : public State {
 			}
 		},
 		{
-			true, true, false, false,
+			true, true, false, false, true,
 			{
 				{{10.0f, 10.0f}, std::string{"Your current hand is at the"}},
 				{{10.0f, 20.0f}, std::string{"bottom of the screen."}},
@@ -971,7 +1080,7 @@ struct TutorialState : public State {
 			}
 		},
 		{
-			true, true, false, false,
+			true, true, false, false, true,
 			{
 				{{10.0f, 10.0f}, std::string{"You can unplay the last card"}},
 				{{10.0f, 20.0f}, std::string{"of the run and return it to"}},
@@ -983,7 +1092,7 @@ struct TutorialState : public State {
 			}
 		},
 		{
-			true, true, true, false,
+			true, true, true, false, true,
 			{
 				{{10.0f, 10.0f}, std::string{"If you have a run of length"}},
 				{{10.0f, 20.0f}, std::string{"at least 3 you may end your"}},
@@ -996,7 +1105,7 @@ struct TutorialState : public State {
 			}
 		},
 		{
-			true, true, false, true,
+			true, true, false, true, true,
 			{
 				{{10.0f, 10.0f}, std::string{"You may discard your hand at"}},
 				{{10.0f, 20.0f}, std::string{"any time with the discard"}},
@@ -1012,7 +1121,7 @@ struct TutorialState : public State {
 			}
 		},
 		{
-			true, true, false, true,
+			true, true, false, true, true,
 			{
 				{{10.0f, 10.0f}, std::string{"In either case you will draw"}},
 				{{10.0f, 20.0f}, std::string{"back up to your maximum hand"}},
@@ -1021,7 +1130,7 @@ struct TutorialState : public State {
 			},
 		},
 		{
-			true, true, false, true,
+			true, true, false, true, true,
 			{
 				{{10.0f, 10.0f}, std::string{"Score: 0"}},
 				{{10.0f, 20.0f}, std::string{"Deck : 118"}},
@@ -1037,7 +1146,7 @@ struct TutorialState : public State {
 			}
 		},
 		{
-			true, true, false, false,
+			true, true, false, false, true,
 			{
 				{{10.0f, 10.0f}, std::string{"Runs are scored primarily on"}},
 				{{10.0f, 20.0f}, std::string{"their length.  A run of 3 has"}},
@@ -1049,7 +1158,7 @@ struct TutorialState : public State {
 			},
 		},
 		{
-			true, true, false, false,
+			true, true, false, false, true,
 			{
 				{{10.0f, 10.0f}, std::string{"This run has a length of 3 for"}},
 				{{10.0f, 20.0f}, std::string{"a base score of 2."}},
@@ -1062,7 +1171,7 @@ struct TutorialState : public State {
 			}
 		},
 		{
-			true, true, false, false,
+			true, true, false, false, true,
 			{
 				{{10.0f, 10.0f}, std::string{"No number appears more than"}},
 				{{10.0f, 20.0f}, std::string{"one time.  The number bonus"}},
@@ -1079,7 +1188,7 @@ struct TutorialState : public State {
 			}
 		},
 		{
-			true, true, false, false,
+			true, true, false, false, true,
 			{
 				{{10.0f, 10.0f}, std::string{"No letter appears more than"}},
 				{{10.0f, 20.0f}, std::string{"one time.  The letter bonus"}},
@@ -1097,7 +1206,7 @@ struct TutorialState : public State {
 			}
 		},
 		{
-			true, true, false, false,
+			true, true, false, false, true,
 			{
 				{{10.0f, 10.0f}, std::string{"A septagon is the most common"}},
 				{{10.0f, 20.0f}, std::string{"shape; appearing 2 times.  The"}},
@@ -1115,10 +1224,10 @@ struct TutorialState : public State {
 			}
 		},
 		{
-			true, true, false, false,
+			true, true, false, false, true,
 			{
 				{{10.0f, 10.0f}, std::string{"The most common card color is "}},
-				{{10.0f, 20.0f}, std::string{"magenta; appearing 2 times."}},
+				{{10.0f, 20.0f}, std::string{"green; appearing 2 times."}},
 				{{10.0f, 30.0f}, std::string{"The color bonus is 1 point."}},
 				{{2.0f, 110.0f}, std::string{"Length - 2"}},
 				{{2.0f, 120.0f}, std::string{"Number - 0"}},
@@ -1134,7 +1243,7 @@ struct TutorialState : public State {
 			}
 		},
 		{
-			true, true, false, false,
+			true, true, false, false, true,
 			{
 				{{10.0f, 10.0f}, std::string{"The total score for this run"}},
 				{{10.0f, 20.0f}, std::string{"is 4 points."}},
@@ -1148,7 +1257,7 @@ struct TutorialState : public State {
 			},
 		},
 		{
-			true, true, false, false,
+			true, true, false, false, true,
 			{
 				{{10.0f, 40.0f}, std::string{"On occasion additional game"}},
 				{{10.0f, 50.0f}, std::string{"rules will be added.  These"}},
@@ -1181,7 +1290,7 @@ struct TutorialState : public State {
 		tutorial_id = 0;
 	}
 
-	GameState OnUserUpdate(float fElapsedTime) {
+	GameState OnUserUpdate(float fElapsedTime) override {
 		GameState next_state = GameState::TUTORIAL;
 		const auto& td = tutorial_data[tutorial_id];
 		if (td.draw_in_play) {
@@ -1190,6 +1299,10 @@ struct TutorialState : public State {
 
 		if (td.draw_hand) {
 			hand.Draw(pge);
+		}
+
+		if (td.draw_color_track) {
+			DrawColorPanel(pge, { 128.0f, 193.0f });
 		}
 
 		if (td.draw_end_turn) {
@@ -1247,10 +1360,6 @@ struct TutorialState : public State {
 
 		return next_state;
 	}
-
-
-
-
 };
 
 struct TutorialMenuState : public State {
@@ -1339,6 +1448,10 @@ public:
 
 		for (int i = 3; i <= 11; i++) {
 			shape_primitives[i] = MakePrimitive(i);
+		}
+
+		for (int i = 0; i < card_colors.size(); i++) {
+			shape_colors[i] = card_colors[i] * 0.6;
 		}
 
 		//
