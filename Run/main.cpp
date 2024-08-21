@@ -427,11 +427,6 @@ enum class GameState {
 	ANIMATE_UNPLAY,
 	LENGTH_SELECT,
 	TUTORIAL,
-	TUTORIAL_MENU,
-	TUTORIAL_CARD,
-	TUTORIAL_PLAY,
-	TUTORIAL_SCORE,
-	TUTORIAL_RULES,
 };
 
 
@@ -1390,58 +1385,6 @@ struct TutorialState : public State {
 		}
 
 		return next_state;
-	}
-};
-
-struct TutorialMenuState : public State {
-	std::array<Button, 5> buttons;
-
-	TutorialMenuState(olc::PixelGameEngine* pge) : State(pge) {
-		//Setup the buttons
-		buttons[0].text = "Card Tour";
-		buttons[0].pos = { 88.0f, 91.0f };
-		buttons[0].size = { 80.0f, 10.0f };
-		buttons[0].text_size = pge->GetTextSize(buttons[0].text);
-		buttons[0].value = 5;
-
-		buttons[1].text = "Objective and Play";
-		buttons[1].pos = { 88.0f, 103.0f };
-		buttons[1].size = { 80.0f, 10.0f };
-		buttons[1].text_size = pge->GetTextSize(buttons[1].text);
-		buttons[1].value = 6;
-
-		buttons[2].text = "Scoring";
-		buttons[2].pos = { 88.0f, 115.0f };
-		buttons[2].size = { 80.0f, 10.0f };
-		buttons[2].text_size = pge->GetTextSize(buttons[2].text);
-		buttons[2].value = 7;
-
-		buttons[3].text = "Extra Rules";
-		buttons[3].pos = { 88.0f, 127.0f };
-		buttons[3].size = { 80.0f, 10.0f };
-		buttons[3].text_size = pge->GetTextSize(buttons[3].text);
-		buttons[3].value = 9;
-
-		buttons[4].text = "Back";
-		buttons[4].pos = { 88.0f, 139.0f };
-		buttons[4].size = { 80.0f, 10.0f };
-		buttons[4].text_size = pge->GetTextSize(buttons[4].text);
-		buttons[4].value = 0;
-	};
-
-	GameState OnUserUpdate(float fElapsedTime) {
-		GameState next_state = GameState::TUTORIAL_MENU;
-
-		for (int i = 0; i < buttons.size(); i++) {
-			pge->FillRectDecal(buttons[i].pos, buttons[i].size, olc::DARK_GREY);
-			olc::vf2d text_pos = buttons[i].pos + buttons[i].size / 2.0f - buttons[i].text_size / 2.0f;
-			pge->DrawStringDecal(text_pos, buttons[i].text, olc::BLACK);
-			if (pge->GetMouse(0).bPressed && PointInRect(pge->GetMousePos(), buttons[i].pos, buttons[i].size)) {
-				next_state = game_length != 0 ? GameState::START_SCREEN : GameState::START_SCREEN;
-			}
-		}
-
-		return GameState::TUTORIAL_MENU;
 	}
 };
 
