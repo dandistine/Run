@@ -4,35 +4,11 @@
 #include <algorithm>
 #include <random>
 
-
-// Number 5 numbers - 1 2 3 4 5
-// Letter 5 letters - A B C D E
-// Shape 5 Shapes   - 1 2 3 4 5 sides
-// Color Not used
-//
-
-// TODO
-// rules changes
-//    first card matches X
-//    each card must match some attribute
-//    cannot unplay
-//    cards change
-//    draw from the discard
-//    reverse run order
-//    time constraint
-//
-// custom decks
-//    Number count
-//    shape side count
-//    letter count
-//    seed
-
 std::random_device rd;
 std::mt19937 rng(rd());
 
-
 struct Rule {
-	bool enabled;
+	bool enabled = false;
 	std::string text;
 	std::string key;
 
@@ -40,44 +16,19 @@ struct Rule {
 	int value = 0;
 };
 
-struct AdditionalRules {
-	// Not allowed to un_play cards
-	Rule no_unplay = { false, "Cannot unplay cards", "no_unplay"};
-
-	// Runs must now be decreasing instead of increasing
-	Rule rev_run_order = { false, "Runs in decreasing order", "rev_run_order" };
-
-	// Each turn has a timer to play.  The turn is ended automatically (either by end or discard)
-	Rule time_constraint = { false, "Time is running out", "time_constraint" };
-
-	// Various scoring changes
-	Rule double_number_score = { false, "Repeated numbers score double", "double_number_score" };
-	Rule double_shape_score = { false, "Repeated shapes score double", "double_shape_score" };
-	Rule double_letter_score = { false, "Repeated letters score double", "double_letter_score" };
-	Rule double_color_score = { false, "Repeated color score double", "double_color_score" };
-
-	// Monochrome
-	Rule monochrome = { false, "Can't see colors", "monochrome" };
-
-	// Draw modifiers
-	//    chance to dupe a card in hand?
-	//    chance to change color to X
-};
-
-//AdditionalRules rules;
-
 std::map<std::string, Rule> possible_rules = {
 	{"no_unplay", {false,  "No take backs", "no_unplay", 7}},
 	{"monochrome", {false, "Monochromatic", "monochrome", 2}},
 	{"double_length", {false, "2x length score", "double_length", 1}},
-	{"double_number", {false, "2x number score", "double_number", 1}},
-	{"double_letter", {false, "2x letter score", "double_letter", 1}},
-	{"double_shape", {false, "2x shape score", "double_shape", 1}},
-	{"double_color", {false, "2x color score ", "double_color", 1}},
+	{"double_number", {false, "2x number score", "double_number", 2}},
+	{"double_letter", {false, "2x letter score", "double_letter", 2}},
+	{"double_shape", {false, "2x shape score", "double_shape", 2}},
+	{"double_color", {false, "2x color score ", "double_color", 2}},
 	{"discard_to_deck", {false, "Discard to deck", "discard_to_deck", 1}},
 	{"run_backwards", {false, "Run Backwards", "run_backwards", 3}},
 	{"carbon_copy", {false, "Carbon copy", "carbon_copy", 1}},
 	{"double_jump", {false, "Double jump", "double_jump", 1}},
+	{"timed_turn", {false, "Hurry hurry!", "timed_turn", 3}},
 };
 
 std::map<std::string, Rule> enabled_rules;
@@ -145,6 +96,8 @@ struct Shape {
 };
 
 olc::vf2d card_size = { 25.0f, 35.0f };
+float fTurnStart = 0.0f;
+float fTotalTime = 0.0f;
 
 std::array<olc::Pixel, 7> card_colors = {
 	olc::Pixel{142, 68, 173},
@@ -158,8 +111,6 @@ std::array<olc::Pixel, 7> card_colors = {
 
 // These will be filled in automatically based on the card colors
 std::array<olc::Pixel, 7> shape_colors;
-//std::array<olc::Pixel, 7> card_colors = { olc::BLUE, olc::DARK_GREEN, olc::RED, olc::MAGENTA, olc::DARK_YELLOW, olc::GREY, olc::DARK_CYAN };
-//std::array<olc::Pixel, 7> shape_colors = { olc::VERY_DARK_BLUE, olc::VERY_DARK_GREEN, olc::VERY_DARK_RED, olc::VERY_DARK_MAGENTA, olc::VERY_DARK_YELLOW, olc::VERY_DARK_GREY, olc::VERY_DARK_CYAN };
 
 struct Card {
 	olc::vf2d size;
@@ -245,8 +196,6 @@ std::vector<Card> CreateDeck(int num_numbers, int num_letters, int num_shapes) {
 	return deck;
 }
 
-
-
 // deck and previously used cards
 std::vector<Card> the_deck;
 std::vector<Card> the_discard;
@@ -264,7 +213,14 @@ bool IsValid(const Card& end_card, const Card& choice) {
 	valid_count += (choice.letter == end_card.letter + req_diff) ? 1 : 0;
 	valid_count += (choice.number == end_card.number + req_diff) ? 1 : 0;
 	valid_count += (choice.shape.primitive->points.size() == end_card.shape.primitive->points.size() + req_diff) ? 1 : 0;
-	valid_count += (choice.shape.color_index == end_card.shape.color_index + req_diff) ? 1 : 0;
+
+	// If monochrome is enabled color would only count if the required difference is also 0
+	if (RuleEnabled("monochrome")) {
+		valid_count += (req_diff == 0) ? 1 : 0;
+	}
+	else {
+		valid_count += (choice.shape.color_index == end_card.shape.color_index + req_diff) ? 1 : 0;
+	}
 
 	return valid_count > 0;
 }
@@ -404,6 +360,53 @@ int score = 0;
 // Index into hand.cards for the card just played, for animation
 int card_played_index = -1;
 
+// Draw an end turn button returning true if it was pressed
+bool DrawEndButton(olc::PixelGameEngine* pge, bool button_active = false) {
+	olc::vf2d button_pos = { 2.0f, 193.0f };
+	olc::vf2d button_size = { 80.0f, 10.0f };
+
+	pge->FillRectDecal(button_pos, button_size, button_active ? olc::DARK_GREY : olc::VERY_DARK_GREY);
+
+	olc::vf2d text_size = pge->GetTextSize("End Turn");
+	olc::vf2d scale = (button_size) / text_size;
+
+	pge->DrawStringDecal(button_pos + olc::vf2d{ 0.5f, 0.5f }, "End Turn", olc::BLACK, scale);
+
+	if (button_active) {
+		if (pge->GetMouse(0).bPressed) {
+			if (PointInRect(pge->GetMousePos(), button_pos, button_size)) {
+				return true;
+			}
+		}
+	}
+	return false;
+}
+
+bool DrawDiscardButton(olc::PixelGameEngine* pge, bool button_active = true) {
+	olc::vf2d button_pos = { 174.0f, 193.0f };
+	olc::vf2d button_size = { 80.0f, 10.0f };
+
+	pge->FillRectDecal(button_pos, button_size, button_active ? olc::DARK_GREY : olc::VERY_DARK_GREY);
+	//pge->FillRectDecal(button_pos, button_size, olc::DARK_GREY);
+
+	olc::vf2d text_size = pge->GetTextSize("Discard");
+	olc::vf2d scale = (button_size) / text_size;
+
+	pge->DrawStringDecal(button_pos + olc::vf2d{ 0.5f, 0.5f }, "Discard", olc::BLACK, scale);
+
+	if (pge->GetMouse(0).bPressed) {
+		if (PointInRect(pge->GetMousePos(), button_pos, button_size)) {
+			return true;
+		}
+	}
+
+	return false;
+}
+
+int TurnTimeLeft() {
+	return 10 - static_cast<int>(std::floor(fTotalTime - fTurnStart));
+}
+
 void DrawNormalInterface(olc::PixelGameEngine* pge) {
 	DrawColorPanel(pge, { 128.0f, 193.0f });
 
@@ -413,6 +416,9 @@ void DrawNormalInterface(olc::PixelGameEngine* pge) {
 	DrawRules(pge, enabled_rules);
 	pge->DrawStringDecal({ 10.0f, 10.0f }, "Score: " + std::to_string(score));
 	pge->DrawStringDecal({ 10.0f, 20.0f }, "Deck : " + std::to_string(the_deck.size()));
+	if (RuleEnabled("timed_turn")) {
+		pge->DrawStringDecal({ 10.0f, 30.0f }, "Time : " + std::to_string(TurnTimeLeft()));
+	}
 }
 
 enum class GameState {
@@ -560,6 +566,7 @@ struct DrawCardsState : public State {
 	DrawCardsState(olc::PixelGameEngine* pge) : State(pge) {};
 
 	void EnterState() override {
+		fTurnStart = fTotalTime;
 		int cards_to_draw = std::min(hand.max_size - hand.cards.size(), the_deck.size());
 
 		for (int i = 0; i < cards_to_draw; i++) {
@@ -569,6 +576,8 @@ struct DrawCardsState : public State {
 	}
 
 	GameState OnUserUpdate(float fElapsedTime) override {
+		DrawEndButton(pge);
+		DrawDiscardButton(pge);
 		DrawNormalInterface(pge);
 		
 		if (hand.cards.size() < 3) {
@@ -581,11 +590,12 @@ struct DrawCardsState : public State {
 struct PickCardState : public State {
 	PickCardState(olc::PixelGameEngine* pge) : State(pge) {};
 
+	void EnterState() override {
+		
+	}
+
 	GameState OnUserUpdate(float fElapsedTime) override {
 		GameState next_state = GameState::PICK_CARD;
-
-		//in_play.Draw(pge);
-		//hand.Draw(pge);
 
 		int cards_in_hand = hand.cards.size();
 
@@ -607,55 +617,25 @@ struct PickCardState : public State {
 		// If the user clicked on the last in play card, let them take it back
 		if (in_play.cards.size() && !in_play.cards.back().locked && pge->GetMouse(0).bPressed) {
 			if (PointInRect(pge->GetMousePos(), in_play.cards.back().position, card_size)) {
-				//card_played_index = 
-				//hand.Add(in_play.cards.back());
-				//in_play.cards.pop_back();
 				next_state = GameState::ANIMATE_UNPLAY;
 			}
 		}
 
 		// Draw an end turn button, if a long enough run has been made
-		if (in_play.cards.size() > 2) {
-			olc::vf2d button_pos = { 2.0f, 193.0f };
-			olc::vf2d button_size = { 80.0f, 10.0f };
-
-			pge->FillRectDecal(button_pos, button_size, olc::DARK_GREY);
-
-			olc::vf2d text_size = pge->GetTextSize("End Turn");
-			olc::vf2d scale = (button_size) / text_size;
-
-			pge->DrawStringDecal(button_pos + olc::vf2d{ 0.5f, 0.5f }, "End Turn", olc::BLACK, scale);
-
-			if (pge->GetMouse(0).bPressed) {
-				if (PointInRect(pge->GetMousePos(), button_pos, button_size)) {
-					next_state = GameState::END_TURN;
-				}
-			}
+		if (DrawEndButton(pge, in_play.cards.size() > 2)) {
+			next_state = GameState::END_TURN;
 		}
 
 		// Draw a discard button ending a turn but granting no points and discarding the hand
-		{
-			olc::vf2d button_pos = { 174.0f, 193.0f };
-			olc::vf2d button_size = { 80.0f, 10.0f };
-
-			pge->FillRectDecal(button_pos, button_size, olc::DARK_GREY);
-
-			olc::vf2d text_size = pge->GetTextSize("Discard");
-			olc::vf2d scale = (button_size) / text_size;
-
-			pge->DrawStringDecal(button_pos + olc::vf2d{ 0.5f, 0.5f }, "Discard", olc::BLACK, scale);
-
-			if (pge->GetMouse(0).bPressed) {
-				if (PointInRect(pge->GetMousePos(), button_pos, button_size)) {
-					if (RuleEnabled("discard_to_deck")) {
-						for (auto& c : hand.cards) {
-							the_deck.push_back(c);
-						}
-					}
-					hand.cards.clear();
-					next_state = GameState::END_TURN;
+		if (DrawDiscardButton(pge, true) || (RuleEnabled("timed_turn") && TurnTimeLeft() <= 0)) {
+			if (RuleEnabled("discard_to_deck")) {
+				for (auto& c : hand.cards) {
+					the_deck.push_back(c);
 				}
 			}
+
+			hand.cards.clear();
+			next_state = GameState::END_TURN;
 		}
 
 		DrawNormalInterface(pge);
@@ -706,7 +686,10 @@ struct EndTurnState : public State{
 		TickRule("run_backwards");
 		TickRule("carbon_copy");
 		TickRule("double_jump");
+		TickRule("timed_turn");
 
+		DrawEndButton(pge);
+		DrawDiscardButton(pge);
 		DrawNormalInterface(pge);
 
 		return GameState::DRAW_CARDS;
@@ -826,6 +809,8 @@ struct PlayCardAnimationState : public State {
 			next_state = GameState::PICK_CARD;
 		}
 
+		DrawEndButton(pge);
+		DrawDiscardButton(pge);
 		DrawNormalInterface(pge);
 
 		return next_state;
@@ -901,6 +886,8 @@ struct UnPlayCardAnimationState : public State {
 			next_state = GameState::PICK_CARD;
 		}
 
+		DrawEndButton(pge);
+		DrawDiscardButton(pge);
 		DrawNormalInterface(pge);
 
 		return next_state;
@@ -1365,8 +1352,6 @@ struct TutorialState : public State {
 			pge->DrawStringDecal(text.pos, text.str, text.color);
 		}
 
-		//pge->DrawStringDecal(pge->GetMousePos(), pge->GetMousePos().str());
-
 		if (pge->GetMouse(0).bPressed) {
 			if (tutorial_id < tutorial_data.size() - 1) {
 				tutorial_id++;
@@ -1392,9 +1377,6 @@ std::map<GameState, std::unique_ptr<State>> gameStates;
 class Example : public olc::PixelGameEngine
 {
 public:
-
-
-
 	Example()
 	{
 		sAppName = "Run";
@@ -1425,13 +1407,6 @@ public:
 		for (int i = 0; i < card_colors.size(); i++) {
 			shape_colors[i] = card_colors[i] * 0.6;
 		}
-
-		//
-
-		//for (int i = 0; i < hand.max_size; i++) {
-		//	hand.Add(the_deck.back());
-		//	the_deck.pop_back();
-		//}
 		
 		return true;
 	}
@@ -1441,6 +1416,7 @@ public:
 
 	bool OnUserUpdate(float fElapsedTime) override
 	{
+		fTotalTime += fElapsedTime;
 		const auto& state = gameStates.at(current_state);
 
 		if (current_state != prev_state) {
