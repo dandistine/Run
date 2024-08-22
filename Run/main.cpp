@@ -569,7 +569,8 @@ struct DrawCardsState : public State {
 	}
 
 	GameState OnUserUpdate(float fElapsedTime) override {
-		hand.Draw(pge);
+		DrawNormalInterface(pge);
+		
 		if (hand.cards.size() < 3) {
 			return GameState::END_GAME;
 		}
@@ -656,13 +657,6 @@ struct PickCardState : public State {
 				}
 			}
 		}
-
-		// Draw the color track
-		//DrawColorPanel(pge, { 128.0f, 193.0f });
-
-		//DrawRules(pge, enabled_rules);
-		//pge->DrawStringDecal({ 10.0f, 10.0f }, "Score: " + std::to_string(score));
-		//pge->DrawStringDecal({ 10.0f, 20.0f }, "Deck : " + std::to_string(the_deck.size()));
 
 		DrawNormalInterface(pge);
 
@@ -812,6 +806,8 @@ struct PlayCardAnimationState : public State {
 	}
 
 	GameState OnUserUpdate(float fElapsedTime) override {
+		GameState next_state = GameState::ANIMATE_PLAY;
+
 		fTotalTime += 1.8f * fElapsedTime;
 
 		for (auto& ani : hand_animation) {
@@ -827,12 +823,12 @@ struct PlayCardAnimationState : public State {
 		if (fTotalTime >= 1.0f) {
 			in_play.Add(hand.cards[card_played_index]);
 			hand.cards.erase(hand.cards.begin() + card_played_index);
-			return GameState::PICK_CARD;
+			next_state = GameState::PICK_CARD;
 		}
 
 		DrawNormalInterface(pge);
 
-		return GameState::ANIMATE_PLAY;
+		return next_state;
 	}
 };
 
@@ -885,6 +881,8 @@ struct UnPlayCardAnimationState : public State {
 	}
 
 	GameState OnUserUpdate(float fElapsedTime) override {
+		GameState next_state = GameState::ANIMATE_UNPLAY;
+
 		fTotalTime += 1.8f * fElapsedTime;
 
 		for (auto& ani : hand_animation) {
@@ -900,12 +898,12 @@ struct UnPlayCardAnimationState : public State {
 		if (fTotalTime >= 1.0f) {
 			hand.Add(in_play.cards.back());
 			in_play.cards.pop_back();
-			return GameState::PICK_CARD;
+			next_state = GameState::PICK_CARD;
 		}
 
 		DrawNormalInterface(pge);
 
-		return GameState::ANIMATE_UNPLAY;
+		return next_state;
 	}
 };
 
@@ -1466,7 +1464,7 @@ public:
 int main()
 {
 	Example demo;
-	if (demo.Construct(256, 240, 4, 4))
+	if (demo.Construct(256, 240, 4, 4, false, true))
 		demo.Start();
 
 	return 0;
