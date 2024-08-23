@@ -8,27 +8,28 @@ std::random_device rd;
 std::mt19937 rng(rd());
 
 struct Rule {
-	bool enabled = false;
 	std::string text;
 	std::string key;
 
 	// Some value specific to the rule
 	int value = 0;
+	bool tick_on_end = true; // tick at the end of a turn
+	bool tick_on_play = false; // tick after a card is played (play animation completed)
 };
 
 std::map<std::string, Rule> possible_rules = {
-	{"no_unplay", {false,  "No take backs", "no_unplay", 7}},
-	{"monochrome", {false, "Monochromatic", "monochrome", 2}},
-	{"double_length", {false, "2x length score", "double_length", 1}},
-	{"double_number", {false, "2x number score", "double_number", 2}},
-	{"double_letter", {false, "2x letter score", "double_letter", 2}},
-	{"double_shape", {false, "2x shape score", "double_shape", 2}},
-	{"double_color", {false, "2x color score ", "double_color", 2}},
-	{"discard_to_deck", {false, "Discard to deck", "discard_to_deck", 1}},
-	{"run_backwards", {false, "Run Backwards", "run_backwards", 3}},
-	{"carbon_copy", {false, "Carbon copy", "carbon_copy", 1}},
-	{"double_jump", {false, "Double jump", "double_jump", 1}},
-	{"timed_turn", {false, "Hurry hurry!", "timed_turn", 3}},
+	{"no_unplay", {"No take backs", "no_unplay", 7, false, true}},
+	{"monochrome", {"Monochromatic", "monochrome", 2}},
+	{"double_length", {"2x length score", "double_length", 1}},
+	{"double_number", {"2x number score", "double_number", 2}},
+	{"double_letter", {"2x letter score", "double_letter", 2}},
+	{"double_shape", {"2x shape score", "double_shape", 2}},
+	{"double_color", {"2x color score ", "double_color", 2}},
+	{"discard_to_deck", {"Discard to deck", "discard_to_deck", 1}},
+	{"run_backwards", {"Run Backwards", "run_backwards", 3}},
+	{"carbon_copy", {"Carbon copy", "carbon_copy", 1}},
+	{"double_jump", {"Double jump", "double_jump", 1}},
+	{"timed_turn", {"Hurry hurry!", "timed_turn", 3}},
 };
 
 std::map<std::string, Rule> enabled_rules;
@@ -236,15 +237,14 @@ struct InPlay {
 		}
 
 		if (RuleEnabled("no_unplay")) {
-			TickRule("no_unplay");
 			c.locked = true;
 		}
 
 		cards.push_back(c);
 
 		int cards_in_play = cards.size();
-		olc::vf2d start_pos = { position.x - cards_in_play * card_size.x / 2.0f, position.y };
-		olc::vf2d increment = { card_size.x, 0.0f };
+		olc::vf2d start_pos = { position.x - cards_in_play * (card_size.x / 2.0f + 0.5f), position.y };
+		olc::vf2d increment = { card_size.x + 1.0f, 0.0f };
 
 		for (auto& c : cards) {
 			c.position = start_pos;
@@ -274,8 +274,8 @@ struct Hand {
 		cards.push_back(c);
 
 		int cards_in_hand = cards.size();
-		olc::vf2d start_pos = { position.x - cards_in_hand * card_size.x / 2.0f, position.y };
-		olc::vf2d increment = { card_size.x, 0.0f };
+		olc::vf2d start_pos = { position.x - cards_in_hand * (card_size.x / 2.0f + 0.5f), position.y };
+		olc::vf2d increment = { card_size.x + 1.0f, 0.0f };
 
 		for (auto& c : cards) {
 			c.position = start_pos;
@@ -456,48 +456,82 @@ struct Button {
 struct StartScreenState : public State {
 	StartScreenState(olc::PixelGameEngine* pge) : State(pge) {};
 
-	olc::Renderable memory;
+	std::vector<Card> left_cards;
+	std::vector<Card> right_cards;
+	std::vector<Card> center_cards;
 
-	olc::vf2d memory_pos[4] = {
-		{32.0f, 64.0f},
-		{32.0f, 128.0f},
-		{224.0f, 128.0f},
-		{224.0f, 64.0f}
-	};
-
-	olc::vf2d memory_uv[4] = {
-		{0.0f, 0.0f},
-		{0.0f, 1.0f},
-		{1.0f, 1.0f},
-		{1.0f, 0.0f}
-	};
-
-	olc::Pixel memory_color[4] = {
-		olc::WHITE,
-		olc::WHITE,
-		olc::BLANK,
-		olc::BLANK
-	};
 
 	void EnterState() override {
 		olc::vf2d text_size = pge->GetTextSize("RUN");
-
-		memory.Create(text_size.x, text_size.y);
-
-		pge->SetDrawTarget(memory.Sprite());
-		pge->Clear(olc::BLANK);
-		pge->DrawString({ 0,0 }, "RUN");
-		memory.Decal()->Update();
-		pge->SetDrawTarget((uint8_t)0);
 
 		hand.cards.clear();
 		the_deck.clear();
 		in_play.cards.clear();
 		enabled_rules.clear();
+
+		olc::vf2d center = olc::vf2d{ 128.0f, 100.0f } - card_size / 2.0f;
+
+		// Only need to generate the title cards the very first time
+		if (!center_cards.size()) {
+			center_cards = {
+				{
+					card_size,
+					{
+						&shape_primitives[3],
+						shape_colors[6],
+						6
+					},
+					card_colors[6], 1, 'R', center - olc::vf2d{card_size.x + 1.0f, 0.0f}
+				},
+				{
+					card_size,
+					{
+						&shape_primitives[4],
+						shape_colors[6],
+						6
+					},
+					card_colors[6], 2, 'U', center
+				},
+				{
+					card_size,
+					{
+						&shape_primitives[5],
+						shape_colors[6],
+						6
+					},
+					card_colors[6], 3, 'N', center + olc::vf2d{card_size.x + 1.0f, 0.0f}
+				},
+			};
+			for (int i = 0; i < 6; i++) {
+				Card c;
+				c.size = card_size;
+				c.color = card_colors[i];
+				c.shape.primitive = &shape_primitives[i + 3];
+				c.shape.color = shape_colors[i];
+				c.shape.color_index = i;
+				c.number = i + 1;
+				c.letter = "ABCDEF"[i];
+				c.position = olc::vf2d{ 0.0f + i * (89.5f / 6.0f), 82.5f};
+				left_cards.push_back(c);
+				c.position = olc::vf2d{ 231.0f - i * (89.5f / 6.0f), 82.5f };
+				right_cards.push_back(c);
+			}
+		}
+
+
 	}
 
 	GameState OnUserUpdate(float fElapsedTime) override {
 		GameState next_state = GameState::START_SCREEN;
+
+		for (int i = 0; i < 6; i++) {
+			left_cards[i].Draw(pge, (i + 1) * (1.0f / 7.0f));
+			right_cards[i].Draw(pge, (i + 1) * (1.0f / 7.0f));
+		}
+
+		for (const auto& c : center_cards) {
+			c.Draw(pge);
+		}
 
 		olc::vf2d button_pos = olc::vf2d{ pge->ScreenWidth() / 3.0f, pge->ScreenHeight() * 2.0f / 3.0f };
 		olc::vf2d button_size = olc::vf2d{ pge->ScreenWidth() / 3.0f, pge->ScreenHeight() / 6.0f };
@@ -519,10 +553,6 @@ struct StartScreenState : public State {
 		scale = (tutorial_size) / text_size;
 
 		pge->DrawStringDecal(tutorial_pos + olc::vf2d{ 1.0, 1.0 }, "Tutorial", olc::BLACK, scale);
-
-		olc::Decal* m = memory.Decal();
-
-		pge->DrawExplicitDecal(m, &memory_pos[0], memory_uv, memory_color);
 
 		if (pge->GetMouse(0).bPressed) {
 			if (PointInRect(pge->GetMousePos(), button_pos, button_size)) {
@@ -677,22 +707,19 @@ struct EndTurnState : public State{
 	}
 
 	GameState OnUserUpdate(float fElapseddTime) override {
-		TickRule("monochrome");
-		TickRule("double_number");
-		TickRule("double_letter");
-		TickRule("double_shape");
-		TickRule("double_color");
-		TickRule("discard_to_deck");
-		TickRule("run_backwards");
-		TickRule("carbon_copy");
-		TickRule("double_jump");
-		TickRule("timed_turn");
-
 		DrawEndButton(pge);
 		DrawDiscardButton(pge);
 		DrawNormalInterface(pge);
 
 		return GameState::DRAW_CARDS;
+	}
+
+	void ExitState() override {
+		for (const auto& [key, rule] : possible_rules) {
+			if (rule.tick_on_end) {
+				TickRule(rule.key);
+			}
+		}
 	}
 };
 
@@ -760,8 +787,8 @@ struct PlayCardAnimationState : public State {
 		play_animation.clear();
 
 		//Figure out where all the in_play cards will be moving to.  The card being moved will be the last card.
-		olc::vf2d position = { in_play.position.x - (in_play.cards.size() + 1) * card_size.x / 2.0f, in_play.position.y };
-		olc::vf2d increment = { card_size.x, 0.0f };
+		olc::vf2d position = { in_play.position.x - (in_play.cards.size() + 1) * (card_size.x / 2.0f + 0.5f), in_play.position.y };
+		olc::vf2d increment = { card_size.x + 1.0f, 0.0f };
 		for (int i = 0; i < in_play.cards.size(); i++) {
 			AnimationState as;
 			as.start_pos = in_play.cards[i].position;
@@ -775,7 +802,7 @@ struct PlayCardAnimationState : public State {
 
 
 		// Figure out where all the cards in hand will be moving to.
-		position = { hand.position.x - (hand.cards.size() - 1) * card_size.x / 2.0f, hand.position.y};
+		position = { hand.position.x - (hand.cards.size() - 1) * (card_size.x / 2.0f + 0.5f), hand.position.y};
 		for (int i = 0; i < hand.cards.size(); i++) {
 			AnimationState as;
 			as.start_pos = hand.cards[i].position;
@@ -815,6 +842,14 @@ struct PlayCardAnimationState : public State {
 
 		return next_state;
 	}
+
+	void ExitState() override {
+		for (const auto& [key, rule] : possible_rules) {
+			if (rule.tick_on_play) {
+				TickRule(rule.key);
+			}
+		}
+	}
 };
 
 struct UnPlayCardAnimationState : public State {
@@ -837,8 +872,8 @@ struct UnPlayCardAnimationState : public State {
 		play_animation.clear();
 
 		//Figure out where all the in_play cards will be moving to.  The card being moved will be the last card.
-		olc::vf2d position = { in_play.position.x - (in_play.cards.size() - 1) * card_size.x / 2.0f, in_play.position.y };
-		olc::vf2d increment = { card_size.x, 0.0f };
+		olc::vf2d position = { in_play.position.x - (in_play.cards.size() - 1) * (card_size.x / 2.0f + 0.5f), in_play.position.y };
+		olc::vf2d increment = { card_size.x + 1.0f, 0.0f };
 		for (int i = 0; i < in_play.cards.size(); i++) {
 			AnimationState as;
 			as.start_pos = in_play.cards[i].position;
@@ -849,7 +884,7 @@ struct UnPlayCardAnimationState : public State {
 		}
 
 		// Figure out where all the cards in hand will be moving to.
-		position = { hand.position.x - (hand.cards.size() + 1) * card_size.x / 2.0f, hand.position.y };
+		position = { hand.position.x - (hand.cards.size() + 1) * (card_size.x / 2.0f + 0.5f), hand.position.y };
 		for (int i = 0; i < hand.cards.size(); i++) {
 			AnimationState as;
 			as.start_pos = hand.cards[i].position;
@@ -1166,9 +1201,9 @@ struct TutorialState : public State {
 				{{10.0f, 170.0f}, std::string{"Click to continue"}},
 			},
 			{
-				{{91.0f, 121.0f}, {10.0f, 10.0f}, olc::YELLOW},
+				{{90.0f, 121.0f}, {10.0f, 10.0f}, olc::YELLOW},
 				{{116.0f, 121.0f}, {10.0f, 10.0f}, olc::YELLOW},
-				{{141.0f, 121.0f}, {10.0f, 10.0f}, olc::YELLOW},
+				{{142.0f, 121.0f}, {10.0f, 10.0f}, olc::YELLOW},
 			}
 		},
 		{
@@ -1184,9 +1219,9 @@ struct TutorialState : public State {
 				{{10.0f, 170.0f}, std::string{"Click to continue"}},
 			},
 			{
-				{{104.0f, 144.0f}, {10.0f, 10.0f}, olc::YELLOW},
+				{{103.0f, 144.0f}, {10.0f, 10.0f}, olc::YELLOW},
 				{{129.0f, 144.0f}, {10.0f, 10.0f}, olc::YELLOW},
-				{{154.0f, 144.0f}, {10.0f, 10.0f}, olc::YELLOW},
+				{{155.0f, 144.0f}, {10.0f, 10.0f}, olc::YELLOW},
 			}
 		},
 		{
@@ -1203,7 +1238,7 @@ struct TutorialState : public State {
 				{{10.0f, 170.0f}, std::string{"Click to continue"}},
 			},
 			{
-				{{93.0f, 127.0f}, {21.0f, 21.0f}, olc::YELLOW},
+				{{91.0f, 127.0f}, {21.0f, 21.0f}, olc::YELLOW},
 				{{143.0f, 127.0f}, {21.0f, 21.0f}, olc::YELLOW},
 			}
 		},
@@ -1222,7 +1257,7 @@ struct TutorialState : public State {
 				{{10.0f, 170.0f}, std::string{"Click to continue"}},
 			},
 			{
-				{{90.0f, 119.0f}, { 27.0f, 37.0f }, olc::YELLOW},
+				{{88.0f, 119.0f}, { 27.0f, 37.0f }, olc::YELLOW},
 				{ {140.0f, 119.0f}, {27.0f, 37.0f}, olc::YELLOW },
 			}
 		},
@@ -1374,10 +1409,10 @@ struct TutorialState : public State {
 std::map<GameState, std::unique_ptr<State>> gameStates;
 
 
-class Example : public olc::PixelGameEngine
+class Run : public olc::PixelGameEngine
 {
 public:
-	Example()
+	Run()
 	{
 		sAppName = "Run";
 
@@ -1439,9 +1474,9 @@ public:
 
 int main()
 {
-	Example demo;
-	if (demo.Construct(256, 240, 4, 4, false, true))
-		demo.Start();
+	Run the_game; // you have lost it
+	if (the_game.Construct(256, 240, 4, 4, false, true))
+		the_game.Start();
 
 	return 0;
 }
